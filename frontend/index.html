@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Юридический ассистент</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark">ЮА</div>
+        <div class="brand-text">
+          <h1>Юридический ассистент</h1>
+          <p>Поиск по базе документов · ответы с источниками</p>
+        </div>
+      </div>
+      <div class="status" id="statusBlock" title="Состояние сервиса">
+        <span class="dot" id="statusDot"></span>
+        <span id="statusText">проверка сервиса…</span>
+      </div>
+    </header>
+
+    <main class="layout">
+      <section class="chat">
+        <div class="messages" id="messages">
+          <div class="empty" id="emptyState">
+            <h2>Задайте вопрос по юридическим документам</h2>
+            <p>Ассистент найдёт применимые положения, приведёт ссылки на пункты
+               и уточнит детали, если данных недостаточно.</p>
+            <div class="examples" id="examples">
+              <button type="button" class="example">Какой срок оплаты предусмотрен договором?</button>
+              <button type="button" class="example">Что будет при просрочке поставки?</button>
+              <button type="button" class="example">На какую дату определяется применимая редакция документа?</button>
+            </div>
+          </div>
+        </div>
+
+        <form class="composer" id="composer">
+          <textarea id="questionInput" rows="1" maxlength="4000"
+            placeholder="Вопрос по документам базы знаний…"></textarea>
+          <button type="submit" class="send" id="sendButton">Отправить</button>
+        </form>
+        <div class="composer-hint">
+          <span id="counter">0 / 4000</span>
+          <span>Enter — отправить · Shift+Enter — новая строка</span>
+        </div>
+      </section>
+
+      <aside class="panel" id="sourcePanel" hidden>
+        <div class="panel-head">
+          <h2>Источник</h2>
+          <button type="button" class="panel-close" id="closeSourcePanel" aria-label="Закрыть">×</button>
+        </div>
+        <div class="panel-body" id="sourcePanelBody"></div>
+      </aside>
+    </main>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
