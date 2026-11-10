@@ -1,0 +1,38 @@
+services:
+  backend:
+    build: .
+    ports:
+      - "127.0.0.1:${PSB_PORT:-8000}:8000"
+    environment:
+      DATA_DIR: /data
+      LLM_BASE_URL: ${LLM_BASE_URL:-${OPENAI_BASE_URL:-}}
+      LLM_API_KEY: ${LLM_API_KEY:-${OPENAI_API_KEY:-}}
+      LLM_MODEL: ${LLM_MODEL:-${OPENAI_MODEL:-${GEN_MODEL:-}}}
+      MAX_WORKERS: ${MAX_WORKERS:-2}
+      TOP_K: ${TOP_K:-5}
+      TEMPERATURE: ${TEMPERATURE:-0}
+      MAX_TOKENS: ${MAX_TOKENS:-1024}
+      PSB_REQUEST_TIMEOUT: ${PSB_REQUEST_TIMEOUT:-25}
+      PSB_CORS_ORIGINS: ${PSB_CORS_ORIGINS:-}
+    volumes:
+      - type: bind
+        source: ${PSB_DATA_DIR:-./data}
+        target: /data
+        read_only: true
+        bind:
+          create_host_path: false
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
