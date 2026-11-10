@@ -67,6 +67,18 @@ def parse_question(raw: str) -> tuple[str, list[dict[str, str]]]:
     return last_user, history
 
 
+_REF_LOCATOR = re.compile(r",\s*(п\.|ст\.|ч\.)\s*([^,]+)\s*$")
+
+
+def _locator_from_reference(reference: str) -> dict[str, str]:
+    """Достаёт пункт из «…, п. 3.3», чтобы сосед цитировался своим номером."""
+    match = _REF_LOCATOR.search(reference or "")
+    if not match:
+        return {}
+    value = match.group(2).strip()
+    return {"clause": value} if match.group(1) == "п." else {"article": value}
+
+
 def _meta_summary(meta: dict[str, Any]) -> dict[str, Any]:
     keys = (
         "doc_type", "doc_number", "doc_date", "edition_date", "effective_date",
@@ -144,13 +156,16 @@ def build_evidence(
                 seen_ids.add(chunk_id)
                 seen_text.add(fingerprint)
                 taken += 1
+                meta = dict(_meta_summary(getattr(chunk, "metadata", None) or {}))
+                meta.update(_locator_from_reference(neighbor.get("source_reference") or ""))
+                meta["neighbor"] = True
                 items.append(
                     {
                         "eid": f"E{len(items) + 1}",
                         "chunk_id": chunk_id,
                         "source": neighbor.get("source_reference") or "",
                         "text": text[:MAX_ITEM_CHARS],
-                        "meta": {"temporal_status": neighbor.get("temporal_status"), "neighbor": True},
+                        "meta": meta,
                     }
                 )
 

@@ -66,9 +66,18 @@ class Retriever:
     def from_data_dir(cls, directory: str | Path | None = None, *,
                       settings: Settings | None = None, dense: bool = True) -> Retriever:
         directory = Path(directory or os.getenv("DATA_DIR", "data"))
-        archive = directory / "knowledge-base.zip"
-        return cls.from_source(archive if archive.is_file() else directory / "knowledge-base",
-                               settings=settings, dense=dense)
+        for name in ("knowledge-base.zip", "knowledge_base.zip", "kb.zip"):
+            source = directory / name
+            if source.is_file():
+                return cls.from_source(source, settings=settings, dense=dense)
+        for name in ("knowledge-base", "knowledge_base"):
+            source = directory / name
+            if source.is_dir():
+                return cls.from_source(source, settings=settings, dense=dense)
+        raise FileNotFoundError(
+            f"Knowledge base not found in {directory}. Expected knowledge-base.zip, "
+            "knowledge_base.zip, kb.zip, knowledge-base/ or knowledge_base/."
+        )
 
     @property
     def manifest(self) -> dict:

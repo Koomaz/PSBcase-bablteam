@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parent
 DIST = ROOT / "dist"
 ZIP_NAME = "psb_legal_assistant.zip"
 
-MODULES = ("evidence.py", "prompt_builder.py", "validator.py", "client.py", "csvio.py")
+MODULES = ("evidence.py", "prompt_builder.py", "validator.py", "client.py", "csvio.py", "citations.py")
 PROMPT = ROOT / "prompts" / "system_prompt.md"
 RETRIEVAL_RUNTIME = ROOT.parent / "ML1" / "retrieval_runtime.py"
 
