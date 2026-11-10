@@ -1,98 +1,39 @@
 import { useEffect, useRef, useState } from "react";
-import { api, type ChatTurn, type Source } from "../lib/api";
+import type { Source } from "../lib/api";
 import { Message, type MessageView } from "./Message";
 
-const LIMITS = {
-  questionChars: 4000,
-  historyMessages: 8,
-  historyChars: 12000,
-};
-
-function buildHistory(messages: MessageView[]): ChatTurn[] {
-  const turns = messages
-    .filter((m) => m.role === "user" || m.role === "assistant")
-    .map((m) => ({ role: m.role as "user" | "assistant", content: m.text }))
-    .slice(-LIMITS.historyMessages);
-  while (
-    turns.length > 1 &&
-    turns.reduce((sum, turn) => sum + turn.content.length, 0) > LIMITS.historyChars
-  ) {
-    turns.shift();
-  }
-  return turns;
-}
+const QUESTION_LIMIT = 4000;
 
 export function ChatPanel({
+  messages,
+  busy,
+  onSend,
+  onRetry,
   onOpenSource,
 }: {
+  messages: MessageView[];
+  busy: boolean;
+  onSend: (question: string) => void;
+  onRetry: () => void;
   onOpenSource: (source: Source) => void;
 }) {
-  const [messages, setMessages] = useState<MessageView[]>([]);
   const [input, setInput] = useState("");
-  const [busy, setBusy] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const nextId = useRef(1);
 
   useEffect(() => {
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages, busy]);
 
-  async function ask(question: string, isRetry = false) {
-    const text = question.trim();
-    if (!text || busy) return;
-
-    const userMessage: MessageView = {
-      id: nextId.current++,
-      role: "user",
-      text,
-    };
-    setMessages((prev) => (isRetry ? prev : [...prev, userMessage]));
-    setBusy(true);
-
-    try {
-      const result = await api.chat(text, buildHistory(messages));
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: nextId.current++,
-          role: "assistant",
-          kind: result.kind,
-          text: result.answer,
-          sources: result.sources,
-        },
-      ]);
-    } catch (err) {
-      const error = err as Error;
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: nextId.current++,
-          role: "error",
-          text: "",
-          errorMessage: error.message,
-        },
-      ]);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  function retryLast() {
-    const lastUser = [...messages].reverse().find((m) => m.role === "user");
-    if (!lastUser) return;
-    setMessages((prev) => prev.filter((m) => m.role !== "error"));
-    void ask(lastUser.text, true);
-  }
-
   function submit() {
     const text = input;
+    if (!text.trim() || busy) return;
     setInput("");
-    void ask(text);
+    onSend(text);
   }
 
   return (
-    <div className="chat">
+    <>
       <div className="messages" ref={scrollRef}>
         {messages.length === 0 && (
           <div className="empty">
@@ -125,7 +66,7 @@ export function ChatPanel({
             key={message.id}
             message={message}
             onOpenSource={onOpenSource}
-            onRetry={retryLast}
+            onRetry={onRetry}
           />
         ))}
 
@@ -150,7 +91,7 @@ export function ChatPanel({
         <textarea
           value={input}
           rows={1}
-          maxLength={LIMITS.questionChars}
+          maxLength={QUESTION_LIMIT}
           placeholder="Вопрос по документам базы знаний…"
           onChange={(event) => setInput(event.target.value)}
           onKeyDown={(event) => {
@@ -166,10 +107,10 @@ export function ChatPanel({
       </form>
       <div className="composer-hint">
         <span>
-          {input.length} / {LIMITS.questionChars}
+          {input.length} / {QUESTION_LIMIT}
         </span>
         <span>Enter — отправить · Shift+Enter — новая строка</span>
       </div>
-    </div>
+    </>
   );
 }
