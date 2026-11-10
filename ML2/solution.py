@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from llmguard.client import LLMError, load_dotenv, make_client
+from llmguard.citations import render_citations
 from llmguard.csvio import find_questions_file, read_questions, write_submission
 from llmguard.evidence import build_evidence, parse_question, premise_warnings, summarize_diagnostics
 from llmguard.prompt_builder import build_messages, build_repair_message, load_system_prompt
@@ -73,6 +74,7 @@ class LegalAssistant:
         top_k: int = 6,
         max_evidence: int = 6,
         max_neighbors: int = 3,
+        cite_style: str | None = None,
         max_words: int = 180,
         max_attempts: int = 2,
         max_tokens: int | None = None,
@@ -84,6 +86,7 @@ class LegalAssistant:
         self.top_k = top_k
         self.max_evidence = max_evidence
         self.max_neighbors = max_neighbors
+        self.cite_style = cite_style or os.getenv("CITE_STYLE", "ref")
         self.max_words = max_words
         self.max_attempts = max(1, max_attempts)
         env_tokens = os.getenv("MAX_TOKENS", "").strip()
@@ -175,6 +178,7 @@ class LegalAssistant:
             text = fallback_refusal(items)
 
         text = ensure_premise_ack(text, conflicts, self.max_words)
+        text = render_citations(text, items, self.cite_style)
 
         answer = Answer(
             qid=str(qid),

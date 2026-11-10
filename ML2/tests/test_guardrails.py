@@ -9,6 +9,7 @@ from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from llmguard.citations import human_reference, render_citations
 from llmguard.csvio import normalize_for_csv, read_questions, read_submission, write_submission
 from llmguard.evidence import build_evidence, parse_question, premise_warnings
 from llmguard.prompt_builder import build_messages, load_system_prompt
@@ -180,6 +181,48 @@ class TestValidator(unittest.TestCase):
         self.assertIn("450 000", text)
 
 
+class TestCitations(unittest.TestCase):
+    def setUp(self):
+        self.items = [
+            {"eid": "E1", "source": "ДОГОВОР № А-08/2024, п. 3.1",
+             "meta": {"doc_type": "contract", "doc_number": "А-08/2024", "clause": "3.1"}},
+            {"eid": "E2", "source": "ТК РФ, ст. 70",
+             "meta": {"doc_type": "law", "doc_number": "ТК РФ", "article": "70"}},
+            {"eid": "E3", "source": "ФЗ 152",
+             "meta": {"doc_type": "law", "doc_number": "152-ФЗ", "article": "9", "part": "1"}},
+            {"eid": "E4", "source": "РЕГЛАМЕНТ, п. 2.4",
+             "meta": {"doc_type": "regulation", "edition_date": "2023-01-10", "clause": "2.4"}},
+        ]
+
+    def test_contract_reference(self):
+        self.assertEqual(human_reference(self.items[0]), "п. 3.1 договора № А-08/2024")
+
+    def test_law_reference(self):
+        self.assertEqual(human_reference(self.items[1]), "ст. 70 ТК РФ")
+        self.assertEqual(human_reference(self.items[2]), "ч. 1 ст. 9 Закона № 152-ФЗ")
+
+    def test_regulation_keeps_edition(self):
+        self.assertEqual(human_reference(self.items[3]), "п. 2.4 регламента в ред. от 10.01.2023")
+
+    def test_merge_adjacent(self):
+        text = render_citations("Плата 450 000 [E1]. Срок [E2][E3].", self.items)
+        self.assertIn("(п. 3.1 договора № А-08/2024)", text)
+        self.assertIn("(ст. 70 ТК РФ; ч. 1 ст. 9 Закона № 152-ФЗ)", text)
+        self.assertNotIn("[E", text)
+
+    def test_style_id_keeps_tokens(self):
+        text = render_citations("Плата [E1].", self.items, style="id")
+        self.assertEqual(text, "Плата [E1].")
+
+    def test_unknown_id_removed(self):
+        self.assertEqual(render_citations("Плата [E9].", self.items), "Плата.")
+
+    def test_both_style(self):
+        text = render_citations("Плата [E1].", self.items, style="both")
+        self.assertIn("(п. 3.1 договора № А-08/2024)", text)
+        self.assertIn("[E1]", text)
+
+
 class TestCsv(unittest.TestCase):
     def test_roundtrip(self):
         import tempfile
@@ -207,7 +250,7 @@ class TestPipeline(unittest.TestCase):
         chunks = [chunk("c1", "3.1. Арендная плата составляет 450 000 рублей в месяц.")]
         assistant = LegalAssistant(retriever=StubRetriever(chunks), llm=ScriptedLLM("Плата 450 000 рублей в месяц [E1]."))
         answer = assistant.answer("1", "Какая арендная плата?")
-        self.assertEqual(answer.text, "Плата 450 000 рублей в месяц [E1].")
+        self.assertEqual(answer.text, "Плата 450 000 рублей в месяц (п. 3.1 договора № А-08/2024).")
         self.assertEqual(answer.citations, ["E1"])
 
     def test_retry_after_bad_citation(self):
@@ -225,7 +268,7 @@ class TestPipeline(unittest.TestCase):
         chunks = [chunk("c1", "3.1. Арендная плата составляет 450 000 рублей в месяц.")]
         llm = ScriptedLLM("", "", "")
         answer = LegalAssistant(retriever=StubRetriever(chunks), llm=llm, max_attempts=2).answer("1", "Арендная плата?")
-        self.assertIn("[E1]", answer.text)
+        self.assertIn("(п. 3.1 договора № А-08/2024)", answer.text)
 
     def test_prompt_contains_hierarchy_and_evidence(self):
         items = build_evidence([chunk("c1", "текст положения")])
