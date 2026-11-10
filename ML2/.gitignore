@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+submission*.csv
+answers_trace.jsonl
+trace*.jsonl
+sample_prompt_user.txt
