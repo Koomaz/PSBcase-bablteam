@@ -250,16 +250,13 @@ def main(argv: list[str] | None = None) -> int:
 
     Retriever = _import_retriever()
     started = time.perf_counter()
-    kb_zip = data_dir / "knowledge-base.zip"
-    kb_dir = data_dir / "knowledge-base"
     try:
-        if kb_zip.is_file() or kb_dir.is_dir():
-            retriever = Retriever.from_data_dir(str(data_dir))
-        else:
-            retriever = Retriever.from_artifacts(str(data_dir / "artifacts"))
-    except Exception as exc:
-        print(f"Не удалось загрузить индекс ({exc}), пробуем data_dir", file=sys.stderr)
         retriever = Retriever.from_data_dir(str(data_dir))
+    except FileNotFoundError:
+        artifacts = data_dir / "artifacts"
+        if not (artifacts / "index_manifest.json").is_file():
+            raise
+        retriever = Retriever.from_artifacts(str(artifacts))
     print(f"Индекс загружен за {time.perf_counter() - started:.1f} c", file=sys.stderr)
 
     assistant = LegalAssistant(
