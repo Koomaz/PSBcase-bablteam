@@ -233,11 +233,13 @@ body {
   color: #1e3a8a;
   font: inherit;
   font-weight: 600;
-  font-size: 0.82em;
-  padding: 1px 7px;
-  margin: 0 2px;
-  border-radius: 8px;
+  font-size: 0.8em;
+  line-height: 1;
+  padding: 2px 4px;
+  margin: 0;
+  border-radius: 6px;
   cursor: pointer;
+  vertical-align: baseline;
   transition: background 0.15s;
 }
 

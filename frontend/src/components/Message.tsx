@@ -22,7 +22,11 @@ function withCitations(
   sources: Source[] | undefined,
   onOpenSource: (source: Source) => void
 ) {
-  return text.split(/(\[\d{1,2}\])/g).map((part, index) => {
+  // Модель ставит пробелы вокруг меток: склеиваем «слово [1] .» → «слово[1].»
+  const normalized = text
+    .replace(/\s+\[(\d{1,2})\]/g, "[$1]")
+    .replace(/\[(\d{1,2})\]\s+([.,;:!?])/g, "[$1]$2");
+  return normalized.split(/(\[\d{1,2}\])/g).map((part, index) => {
     const match = /^\[(\d{1,2})\]$/.exec(part);
     if (!match) {
       return <span key={index}>{part}</span>;

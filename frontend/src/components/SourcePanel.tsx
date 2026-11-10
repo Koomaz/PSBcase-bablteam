@@ -12,6 +12,24 @@ function formatReference(source: Source | Fragment): string {
   return parts.join(", ");
 }
 
+function formatDate(value?: string | null): string | undefined {
+  if (!value) return undefined;
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  return match ? `${match[3]}.${match[2]}.${match[1]}` : value;
+}
+
+const STATUS_LABELS: Record<string, string> = {
+  undated: "без указания даты",
+  current: "действующая редакция",
+  current_snapshot: "действующая редакция",
+  superseded: "утратила силу",
+};
+
+function statusLabel(value?: string | null): string | undefined {
+  if (!value) return undefined;
+  return STATUS_LABELS[value] ?? value;
+}
+
 function MetaRow({ label, value }: { label: string; value?: string | null }) {
   if (!value) return null;
   return (
@@ -66,11 +84,11 @@ export function SourcePanel({
           <MetaRow label="Положение" value={formatReference(source) || "—"} />
           <MetaRow label="Ссылка" value={source.source_reference} />
           <MetaRow label="Номер документа" value={source.doc_number} />
-          <MetaRow label="Дата документа" value={source.doc_date} />
-          <MetaRow label="Редакция от" value={source.edition_date} />
-          <MetaRow label="Действует с" value={source.effective_date} />
-          <MetaRow label="Статус редакции" value={source.version_status} />
-          <MetaRow label="Временной статус" value={source.temporal_status} />
+          <MetaRow label="Дата документа" value={formatDate(source.doc_date)} />
+          <MetaRow label="Редакция от" value={formatDate(source.edition_date)} />
+          <MetaRow label="Действует с" value={formatDate(source.effective_date)} />
+          <MetaRow label="Статус редакции" value={statusLabel(source.version_status)} />
+          <MetaRow label="Временной статус" value={statusLabel(source.temporal_status)} />
         </div>
         <div className="fragment">
           <h4>Подтверждающий фрагмент</h4>
