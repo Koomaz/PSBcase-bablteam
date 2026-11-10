@@ -8,6 +8,9 @@
 проксируются на бэкенд (по умолчанию http://127.0.0.1:8000). Проксирование
 избавляет от настройки CORS: фронт и API выглядят для браузера одним origin.
 
+Статика отдаётся из собранного каталога dist/ (npm run build), а при его
+отсутствии — из текущего каталога.
+
 Переменные окружения:
     PSB_API_URL        адрес бэкенда (web_api.py, uvicorn)
     PSB_FRONTEND_PORT  порт статического сервера
@@ -22,7 +25,8 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent
+BASE = Path(__file__).resolve().parent
+ROOT = BASE / "dist" if (BASE / "dist").is_dir() else BASE
 API_URL = os.getenv("PSB_API_URL", "http://127.0.0.1:8000").rstrip("/")
 PORT = int(os.getenv("PSB_FRONTEND_PORT", "8080"))
 
@@ -87,6 +91,11 @@ class Handler(BaseHTTPRequestHandler):
             requested = "/index.html"
         target = (ROOT / requested.lstrip("/")).resolve()
         if ROOT.resolve() not in target.parents or not target.is_file():
+            # SPA-фолбэк: неизвестные пути отдаём index.html
+            index = ROOT / "index.html"
+            if index.is_file() and "." not in requested.rsplit("/", 1)[-1]:
+                self._relay(200, CONTENT_TYPES[".html"], index.read_bytes())
+                return
             self._relay(404, "text/plain; charset=utf-8", "Не найдено".encode("utf-8"))
             return
         payload = target.read_bytes()
