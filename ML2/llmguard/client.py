@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import random
 import re
 import time
@@ -177,4 +178,12 @@ def make_client():
     client = ChatClient.from_env()
     if client.configured and os.getenv("MOCK_LLM", "").lower() not in ("1", "true", "yes"):
         return client
+    if client.configured:
+        print("[ML2] MOCK_LLM=1: работаем на заглушке, модель не вызывается", file=sys.stderr)
+    else:
+        print(
+            "[ML2] ВНИМАНИЕ: LLM_BASE_URL/LLM_API_KEY не заданы — ответы генерирует заглушка. "
+            "Для боевого прогона заполните ML2/.env",
+            file=sys.stderr,
+        )
     return MockClient()
