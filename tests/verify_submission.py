@@ -5,7 +5,6 @@ import csv
 import json
 import os
 import re
-import resource
 import shutil
 import subprocess
 import sys
@@ -16,10 +15,15 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from zipfile import ZipFile
 
+try:
+    import resource
+except ImportError:
+    resource = None
+
 EXPECTED_FILES = {
     "solution.py", "psb_backend.py", "retrieval_runtime.py", "requirements.txt",
     "ml2_solution.py", "client.py", "csvio.py", "evidence.py",
-    "prompt_builder.py", "validator.py", "system_prompt.py",
+    "prompt_builder.py", "validator.py", "system_prompt.py", "citations.py",
 }
 FAKE_ANSWER = (
     'Посылка не подтверждается, "проверка" требует сверить условия с найденным положением '
@@ -45,8 +49,8 @@ def verify(zip_path: Path, questions: Path, knowledge_base: Path) -> None:
                 messages = body["messages"]
                 content = next(message["content"] for message in messages if message["content"].startswith("<evidence>"))
                 question = re.search(r"<question>(.*?)</question>", content, re.S)[1].strip()
-                history = json.loads(messages[1]["content"])["history"] if messages[1]["content"].startswith("{") else []
-                requests.append((question, history))
+                context = re.search(r"<user_context>(.*?)</user_context>", content, re.S)[1].strip()
+                requests.append((question, context != "(нет)"))
                 answer = FAKE_ANSWER if "[E1]" in content else NO_EVIDENCE
                 raw = json.dumps({"choices": [{"message": {"content": answer}, "finish_reason": "stop"}]}).encode()
                 self.send_response(200)
@@ -75,7 +79,7 @@ def verify(zip_path: Path, questions: Path, knowledge_base: Path) -> None:
         work.mkdir()
         data.mkdir()
         shutil.copyfile(questions, data / "questions.csv")
-        shutil.copyfile(knowledge_base, data / "knowledge-base.zip")
+        shutil.copyfile(knowledge_base, data / "knowledge_base.zip")
         worker = threading.Thread(target=server.serve_forever, daemon=True)
         worker.start()
         env = {
@@ -86,15 +90,18 @@ def verify(zip_path: Path, questions: Path, knowledge_base: Path) -> None:
             "LLM_MODEL": "local-model",
             "MAX_WORKERS": "2",
         }
+        if os.name == "nt":
+            env.update({key: os.environ[key] for key in ("SystemRoot", "TEMP", "TMP") if key in os.environ})
         started = time.monotonic()
         try:
             result = subprocess.run(
-                [sys.executable, "-E", "-s", str(root / "solution.py")],
+                [sys.executable, "-X", "utf8", "-E", "-s", str(root / "solution.py")],
                 cwd=work,
                 env=env,
                 check=False,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
                 timeout=90,
             )
             elapsed = time.monotonic() - started
@@ -123,9 +130,12 @@ def verify(zip_path: Path, questions: Path, knowledge_base: Path) -> None:
         assert all('"проверка"' in row["answer"] and "[1]" in row["answer"] for row in generated)
         assert len({question for question, history in requests if history}) == 5
         assert all(not question.startswith("Пользователь:") for question, _ in requests)
-        peak_rss = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
-        peak_mib = peak_rss / (1024 * 1024 if sys.platform == "darwin" else 1024)
-        print(f"Verified {len(rows)}/18 rows, {len(requests)} mock model calls, {elapsed:.3f} s, peak RSS {peak_mib:.1f} MiB")
+        memory = ""
+        if resource is not None:
+            peak_rss = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
+            peak_mib = peak_rss / (1024 * 1024 if sys.platform == "darwin" else 1024)
+            memory = f", peak RSS {peak_mib:.1f} MiB"
+        print(f"Verified {len(rows)}/18 rows, {len(requests)} mock model calls, {elapsed:.3f} s{memory}")
 
 
 if __name__ == "__main__":

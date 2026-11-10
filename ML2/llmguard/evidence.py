@@ -5,7 +5,8 @@ from __future__ import annotations
 import re
 from typing import Any, Iterable, Sequence
 
-MAX_ITEM_CHARS = 1100
+from .prompt_builder import render_evidence
+
 MAX_TOTAL_CHARS = 7000
 
 USER_PREFIX = re.compile(r"^\s*(?:пользователь|user|клиент)\s*[:\-]\s*", re.I)
@@ -67,24 +68,13 @@ def parse_question(raw: str) -> tuple[str, list[dict[str, str]]]:
     return last_user, history
 
 
-_REF_LOCATOR = re.compile(r",\s*(п\.|ст\.|ч\.)\s*([^,]+)\s*$")
-
-
-def _locator_from_reference(reference: str) -> dict[str, str]:
-    """Достаёт пункт из «…, п. 3.3», чтобы сосед цитировался своим номером."""
-    match = _REF_LOCATOR.search(reference or "")
-    if not match:
-        return {}
-    value = match.group(2).strip()
-    return {"clause": value} if match.group(1) == "п." else {"article": value}
-
-
 def _meta_summary(meta: dict[str, Any]) -> dict[str, Any]:
     keys = (
-        "doc_type", "doc_number", "doc_date", "edition_date", "effective_date",
+        "doc_title", "doc_type", "doc_number", "doc_date", "edition_date", "effective_date",
         "validity_period", "version_status", "temporal_status", "article",
         "section", "clause", "part", "subclause", "appendix", "amends_clause",
-        "counterparties", "law_code",
+        "counterparties", "law_code", "parent_doc_number", "document_temporal_status",
+        "amendment_status", "amendment_application_date", "amendment_application_relation",
     )
     out = {k: meta.get(k) for k in keys if meta.get(k) not in (None, "", [], {})}
     return out
@@ -104,70 +94,49 @@ def build_evidence(
     """
     items: list[dict[str, Any]] = []
     seen_ids: set[str] = set()
-    seen_text: set[str] = set()
     total = 0
 
+    def add(chunk_id, text, source, metadata, citation, *, neighbor=False) -> bool:
+        nonlocal total
+        if not text.strip() or (chunk_id and chunk_id in seen_ids):
+            return False
+        meta = _meta_summary({**metadata, **citation})
+        if neighbor:
+            meta["neighbor"] = True
+        item = {
+            "eid": f"E{len(items) + 1}", "chunk_id": chunk_id, "source": source,
+            "text": text.strip(), "meta": meta, "citation_payload": citation,
+        }
+        cost = len(render_evidence([item])) + (2 if items else 0)
+        if total + cost > max_total_chars:
+            return False
+        items.append(item)
+        if chunk_id:
+            seen_ids.add(chunk_id)
+        total += cost
+        return True
+
+    included = []
     for chunk in chunks or []:
         if len(items) >= max_items:
             break
-
-        chunk_id = getattr(chunk, "chunk_id", "") or ""
-        text = (getattr(chunk, "text", "") or "").strip()
-        if not text or chunk_id in seen_ids:
-            continue
-
-        fingerprint = re.sub(r"\s+", " ", text.lower())[:220]
-        if fingerprint in seen_text:
-            continue
-
-        if total + len(text) > max_total_chars and items:
-            break
-
-        seen_ids.add(chunk_id)
-        seen_text.add(fingerprint)
-        total += len(text)
-
-        meta = getattr(chunk, "metadata", None) or {}
-        items.append(
-            {
-                "eid": f"E{len(items) + 1}",
-                "chunk_id": chunk_id,
-                "source": getattr(chunk, "source_reference", "") or "",
-                "text": text[:MAX_ITEM_CHARS],
-                "meta": _meta_summary(meta),
-            }
-        )
+        if add(getattr(chunk, "chunk_id", "") or "", getattr(chunk, "text", "") or "",
+               getattr(chunk, "source_reference", "") or "", getattr(chunk, "metadata", None) or {},
+               getattr(chunk, "citation_payload", None) or {}):
+            included.append(chunk)
 
     if max_neighbors > 0 and items:
         taken = 0
-        for chunk in list(chunks)[:2]:
+        for chunk in included[:2]:
             if taken >= max_neighbors:
                 break
             for neighbor in getattr(chunk, "neighboring_context", None) or []:
                 if taken >= max_neighbors or len(items) >= max_items + max_neighbors:
                     break
-                chunk_id = neighbor.get("chunk_id") or ""
-                text = (neighbor.get("text") or "").strip()
-                if not text or chunk_id in seen_ids:
-                    continue
-                fingerprint = re.sub(r"\s+", " ", text.lower())[:220]
-                if fingerprint in seen_text:
-                    continue
-                seen_ids.add(chunk_id)
-                seen_text.add(fingerprint)
-                taken += 1
-                meta = dict(_meta_summary(getattr(chunk, "metadata", None) or {}))
-                meta.update(_locator_from_reference(neighbor.get("source_reference") or ""))
-                meta["neighbor"] = True
-                items.append(
-                    {
-                        "eid": f"E{len(items) + 1}",
-                        "chunk_id": chunk_id,
-                        "source": neighbor.get("source_reference") or "",
-                        "text": text[:MAX_ITEM_CHARS],
-                        "meta": meta,
-                    }
-                )
+                if add(neighbor.get("chunk_id") or "", neighbor.get("text") or "",
+                       neighbor.get("source_reference") or "", neighbor.get("metadata") or {},
+                       neighbor.get("citation_payload") or {}, neighbor=True):
+                    taken += 1
 
     return items
 

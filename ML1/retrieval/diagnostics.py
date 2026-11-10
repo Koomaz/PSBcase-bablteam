@@ -34,6 +34,10 @@ def retrieval_warnings(q, final: list, issues: list[dict]) -> list[str]:
         warnings.append("multiple_document_editions")
     if any(row.metadata["doc_type"] == "addendum" for row in final):
         warnings.append("check_addendum_applicability")
+    if any(row.metadata.get("amendment_status") in {
+        "amendment_trigger_unverified", "amendment_period_overlaps_change",
+    } for row in final):
+        warnings.append("amendment_trigger_date_unconfirmed")
     if any(item["issue"] == "quarantined_prompt_directive" for item in issues):
         warnings.append("source_prompt_directive_quarantined")
     if any(item["issue"] != "quarantined_prompt_directive" for item in issues):

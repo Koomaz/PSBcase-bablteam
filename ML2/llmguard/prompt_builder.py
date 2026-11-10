@@ -21,6 +21,10 @@ USER_TEMPLATE = """<evidence>
 {diagnostics}
 </retrieval_diagnostics>
 
+<user_context>
+{user_context}
+</user_context>
+
 <question>
 {question}
 </question>
@@ -79,6 +83,7 @@ def build_messages(
     warnings: Sequence[str] | None = None,
     diagnostics: str = "",
     system_prompt: str | None = None,
+    user_context: str = "",
 ) -> list[dict[str, str]]:
     system = system_prompt if system_prompt is not None else load_system_prompt()
     warning_text = (
@@ -88,6 +93,10 @@ def build_messages(
         evidence=render_evidence(items),
         warnings=warning_text,
         diagnostics=diagnostics or "(нет)",
+        user_context=(
+            "Ранее указанные пользователем обстоятельства. Используй их для понимания текущего вопроса. "
+            "Проверяй утверждения о документах по доказательствам.\n" + user_context if user_context else "(нет)"
+        ),
         question=(question or "").strip(),
     )
     return [

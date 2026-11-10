@@ -6,6 +6,7 @@ EMB_MODEL=BAAI/bge-m3
 # Copy the actual Qwen3 Reranker 8B model ID provided by the platform.
 RERANKER_MODEL=
 RERANKER_TOP_N=20
+RETRIEVAL_RERANKER_MODE=balanced
 RETRIEVAL_EMBEDDING_PATH=/embeddings
 RETRIEVAL_RERANKER_PATH=/rerank
 RETRIEVAL_API_TIMEOUT=3

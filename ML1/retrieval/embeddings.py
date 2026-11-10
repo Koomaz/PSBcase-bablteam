@@ -5,6 +5,7 @@ import math
 import socket
 import time
 from urllib.error import HTTPError, URLError
+from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from .config import Settings
@@ -26,7 +27,18 @@ class ModelAPI:
     def post(self, path: str, payload: dict, *, building: bool = False) -> dict:
         if not self.settings.configured:
             raise ModelAPIError("proxy_not_configured")
-        url = self.settings.base_url.rstrip("/") + "/" + path.lstrip("/")
+        base = self.settings.base_url.rstrip("/").removesuffix("/chat/completions")
+        endpoint = "/" + path.lstrip("/")
+        try:
+            parsed = urlsplit(base)
+        except ValueError:
+            raise ModelAPIError("invalid_proxy_url") from None
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.query or parsed.fragment:
+            raise ModelAPIError("invalid_proxy_url")
+        # A bare proxy host follows the same /v1 convention as the generation client.
+        if not parsed.path and endpoint in {"/embeddings", "/rerank"}:
+            base += "/v1"
+        url = base + endpoint
         req = Request(
             url, data=json.dumps(payload).encode("utf-8"),
             headers={"Content-Type": "application/json", "Authorization": f"Bearer {self.settings.api_key}"},

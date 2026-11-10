@@ -106,6 +106,83 @@ class RetrievalChecks(unittest.TestCase):
         self.assertEqual(hits, [])
         self.assertIn("query_prompt_directive_suspected", diag["warnings"])
 
+    def test_history_current_turn_and_corrections(self):
+        question = "Какой гарантийный срок?"
+        for number, clause in (("П-17/2024", "5.2"), ("ПТ-05/2023", "6.1")):
+            history = [
+                {"role": "user", "content": f"Обсуждаем договор {number}."},
+                {"role": "assistant", "content": "Уточните обстоятельства."},
+                {"role": "user", "content": "Товар уже привезли."},
+                {"role": "user", "content": question},
+            ]
+            hits, diag = self.searcher.search_with_diagnostics(question, history=history)
+            self.assertEqual((hits[0].metadata["doc_number"], hits[0].metadata["clause"]), (number, clause))
+            self.assertNotIn(question, diag["user_context"])
+            self.assertNotIn("Уточните обстоятельства.", diag["user_context"])
+        hits = self.searcher.search(
+            "Какой срок гарантии не у «Альфа-Трейд», а у «Альфа-Трейдинг»?",
+            history=[{"role": "user", "content": "Договор П-17/2024."}],
+        )
+        self.assertEqual(hits[0].metadata["doc_number"], "ПТ-05/2023")
+        _, diag = self.searcher.search_with_diagnostics(
+            "П-17/2024. Куда везти товар?",
+            history=[{"role": "user", "content": "У Альфа-Трейд спецификация от 1 октября 2024 года."}],
+        )
+        self.assertEqual(diag["specification_period"], ["2024-10-01", "2024-10-01"])
+
+    def test_rephrased_operational_questions(self):
+        cases = (
+            ("Можно перечислить деньги «Альфа-Трейдинг» до получения товара?", "contract", "4.2"),
+            ("За чей счёт «Альфа-Трейд» привозит и упаковывает мебель?", "contract", "2.1"),
+            ("Кто начинает согласование нового договора?", "regulation", "1.3"),
+            ("Можно рассчитаться с «Альфа-Трейдинг» перед отгрузкой?", "contract", "4.2"),
+            ("Кто запускает процедуру согласования?", "regulation", "1.3"),
+        )
+        for query, kind, clause in cases:
+            with self.subTest(query=query):
+                hits = self.searcher.search(query, top_k=3)
+                self.assertIn((kind, clause), {(hit.metadata["doc_type"], hit.metadata["clause"]) for hit in hits})
+
+    def test_specification_threshold_and_related_contract(self):
+        for period, expected in (
+            ("30 сентября 2024 года", "amendment_not_yet_applicable"),
+            ("1 октября 2024 года", "amendment_not_yet_applicable"),
+            ("2 октября 2024 года", "amendment_applicable"),
+            ("октябре 2024 года", "amendment_period_overlaps_change"),
+        ):
+            with self.subTest(period=period):
+                hits, diag = self.searcher.search_with_diagnostics(
+                    f"Куда везти товар по П-17/2024, если спецификацию подписали в {period}?", top_k=3,
+                )
+                addon = next(hit for hit in hits if hit.metadata["doc_type"] == "addendum")
+                base = next(hit for hit in hits if hit.metadata["clause"] == "3.2")
+                self.assertEqual(addon.metadata["amendment_status"], expected)
+                self.assertEqual(addon.metadata["document_temporal_status"], "applicable")
+                self.assertEqual(base.metadata["parent_doc_id"], None)
+                self.assertIsNotNone(diag["specification_period"])
+                if expected == "amendment_applicable":
+                    self.assertEqual(base.metadata["temporal_status"], "superseded_by_amendment")
+                if expected == "amendment_not_yet_applicable":
+                    self.assertLess(hits.index(base), hits.index(addon))
+        hits, diag = self.searcher.search_with_diagnostics("Куда везти по П-17/2024 при поставке 2 октября 2024 года?")
+        self.assertIsNone(diag["specification_period"])
+        self.assertIn("amendment_trigger_date_unconfirmed", diag["warnings"])
+        hits, diag = self.searcher.search_with_diagnostics(
+            "Куда везти по П-17/2024, если спецификацию подписали не 30 сентября 2024 года, а 2 октября 2024 года?"
+        )
+        self.assertEqual(diag["specification_period"], ["2024-10-02", "2024-10-02"])
+        self.assertEqual(hits[0].metadata["amendment_status"], "amendment_applicable")
+
+    def test_neighbor_has_own_article_part_and_offsets(self):
+        first = self.searcher.search("ст. 9 152-ФЗ, ч. 2", top_k=1)[0]
+        self.assertEqual({n["metadata"]["part"] for n in first.neighboring_context}, {"1", "3"})
+        for neighbor in first.neighboring_context:
+            citation = neighbor["citation_payload"]
+            self.assertEqual(citation["article"], "9")
+            self.assertEqual(citation["part"], neighbor["metadata"]["part"])
+            self.assertEqual(citation["chunk_id"], neighbor["chunk_id"])
+            self.assertEqual(citation["char_start"], neighbor["char_start"])
+
     def test_model_clients_index_and_fallback(self):
         requests = []
 
@@ -159,13 +236,15 @@ class RetrievalChecks(unittest.TestCase):
             calls = 0
 
             def open(self, req, *, timeout):
+                if req.full_url != "http://mock.invalid/v1/embeddings":
+                    raise AssertionError(req.full_url)
                 self.calls += 1
                 if self.calls == 1:
                     raise HTTPError(req.full_url, 429, "rate limit", {}, io.BytesIO(b"sensitive body"))
                 return io.BytesIO(b'{"data":[{"index":0,"embedding":[3,4]}]}')
 
         opener = FlakyOpener()
-        config = Settings(base_url="http://mock.invalid/v1", api_key="test-placeholder")
+        config = Settings(base_url="http://mock.invalid", api_key="test-placeholder")
         with patch("retrieval.embeddings.build_opener", return_value=opener), patch("retrieval.embeddings.time.sleep"):
             self.assertEqual(ModelAPI(config).embed(["test"]), [[0.6, 0.8]])
             self.assertEqual(opener.calls, 2)

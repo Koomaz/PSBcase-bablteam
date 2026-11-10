@@ -14,6 +14,7 @@ CITE_RUN = re.compile(r"(?:\[\s*[EЕ]\s*\d{1,2}\s*\])+")
 CITE_ID = re.compile(r"(\d{1,2})")
 
 LAW_CODES = re.compile(r"\b(ТК|НК|КоАП|ГК|ГПК|АПК|УК)\s*РФ\b")
+KNOWN_LAW_CODES = {"ТК": "ТК РФ", "НК": "НК РФ", "КоАП": "КоАП РФ"}
 
 CODE_ALIASES = (
     ("трудовой кодекс", "ТК РФ"),
@@ -50,8 +51,13 @@ def _doc_label(meta: dict[str, Any], genitive: bool = False) -> str:
         if doc_type == "regulation":
             edition = _date_ru(meta.get("edition_date"))
             return f"{base} в ред. от {edition}" if edition else base
-        return f"{base} № {number}" if number else base
+        label = f"{base} № {number}" if number else base
+        if doc_type == "addendum" and meta.get("parent_doc_number"):
+            label += f" к договору № {meta['parent_doc_number']}"
+        return label
     if doc_type == "law":
+        if label := KNOWN_LAW_CODES.get(meta.get("law_code")):
+            return label
         haystack = f"{number} {title}".lower()
         for needle, alias in CODE_ALIASES:
             if needle in haystack:
@@ -72,29 +78,39 @@ def _locator(meta: dict[str, Any], doc_type: str) -> str:
     part = (meta.get("part") or "").strip()
     clause = (meta.get("clause") or "").strip()
     subclause = (meta.get("subclause") or "").strip()
+    appendix = (meta.get("appendix") or "").strip()
 
     if doc_type == "law":
-        locator = " ".join(filter(None, [f"ч. {part}" if part else "", f"ст. {article}" if article else ""]))
-        return locator
+        return " ".join(f"{label} {value}" for label, value in (
+            ("подп.", subclause), ("п.", clause), ("ч.", part), ("ст.", article),
+        ) if value)
 
     if clause:
-        return f"п. {clause}" + (f".{subclause}" if subclause else "")
+        if subclause.startswith(clause + "."):
+            return f"п. {subclause}"
+        return f"подп. {subclause} п. {clause}" if subclause else f"п. {clause}"
     if article:
         return f"ст. {article}"
+    if appendix:
+        return appendix
     return ""
 
 
 def human_reference(item: dict[str, Any]) -> str:
     """«(п. 3.1 договора № А-08/2024)» без скобок — их ставит render_citations."""
-    meta = item.get("meta") or {}
+    meta = {**(item.get("meta") or {}), **(item.get("citation_payload") or {})}
     doc_type = (meta.get("doc_type") or "").lower()
+    source = (item.get("source") or "").strip()
+    if not doc_type and source:
+        return source
     locator = _locator(meta, doc_type)
     label = _doc_label(meta, genitive=bool(locator))
 
     if locator:
         return f"{locator} {label}"
 
-    source = (item.get("source") or "").strip()
+    if doc_type == "addendum" and meta.get("amends_clause"):
+        return f"{label}, изменение п. {meta['amends_clause']} основного договора"
     tail = source.rsplit(", ", 1)[-1] if ", " in source else ""
     if tail and re.match(r"^(?:п\.|ст\.|ч\.|прил\.)", tail, re.I):
         return f"{tail} {_doc_label(meta, genitive=True)}"

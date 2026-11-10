@@ -4,7 +4,7 @@ import re
 from collections import defaultdict
 from dataclasses import dataclass
 
-from .bm25_index import expand_terms, lexical_terms, stem, words
+from .bm25_index import expand_terms, intent_vocabulary, lexical_terms, stem, words
 from .config import RRF_K
 from .metadata import DOC_NUM, canonical_number, normalize, query_period
 
@@ -16,6 +16,8 @@ REFERENCE = re.compile(
 )
 LETTER_REFERENCE = re.compile(r'(?<!\w)(?:подпункт(?:а|е|ом)?|подп)\.?\s+[«"(]?([а-я])\b', re.I)
 NUMBER_QUERY = re.compile(rf"(?<!\w)({DOC_NUM})(?!\w)", re.I)
+CORRECT_SCOPE = re.compile(r"(?:^|[\s,])не\s+[^.!?\n]+?,\s*а\s+", re.I)
+SPECIFICATION = re.compile(r"\bспецификац\w*\b", re.I)
 CODE_QUERY = (
     ("ТК", r"\b(?:тк(?:\s*рф)?|трудов\w+\s+кодекс\w*)\b"),
     ("НК", r"\b(?:нк(?:\s*рф)?|налогов\w+\s+кодекс\w*)\b"),
@@ -29,17 +31,20 @@ class Query:
     original: str
     latest: str
     contextual: str
+    user_context: str
     terms: dict[str, float]
     refs: dict[str, set[str]]
     numbers: set[str]
     aliases: set[str]
     codes: set[str]
     period: tuple[str, str] | None
+    specification_period: tuple[str, str] | None
     edition_period: bool
     comparative: bool
     regulations: bool
     addenda: bool
     intent_terms: set[str]
+    operation_terms: set[str]
 
 
 def _user_turns(query: str, history: list | None) -> tuple[str, list[str]]:
@@ -57,8 +62,13 @@ def _user_turns(query: str, history: list | None) -> tuple[str, list[str]]:
             if normalize(match[1]) in {"пользователь", "user"}
         ]
         if turns:
-            return turns[-1], user_messages + turns[:-1]
-    return query.strip(), user_messages
+            query = turns[-1]
+            user_messages.extend(turns[:-1])
+    latest = query.strip()
+    # Some callers append the current turn before passing the conversation.
+    while user_messages and normalize(user_messages[-1]) == normalize(latest):
+        user_messages.pop()
+    return latest, user_messages[-5:]
 
 
 def _aliases_in(text: str, aliases: set[str]) -> set[str]:
@@ -83,15 +93,65 @@ def _numbers_in(text: str) -> set[str]:
     return {canonical_number(match[1]) for match in NUMBER_QUERY.finditer(normalize(text))}
 
 
-def analyze_query(query: str, history: list | None, aliases: set[str]) -> Query:
+def _scope(text: str, aliases: set[str]) -> tuple[set[str], set[str], set[str]]:
+    normalized = normalize(text)
+    if correction := CORRECT_SCOPE.search(normalized):
+        corrected = _scope(normalized[correction.end():], aliases)
+        if any(corrected):
+            return corrected
+    numbers = _numbers_in(normalized)
+    if addon_number := re.search(r"\b(?:допсоглашен\w*|дополнительн\w+\s+соглашен\w*)\s*№\s*(\d+)\b", normalized):
+        numbers.add(addon_number[1])
+    codes = {key for key, expression in CODE_QUERY if re.search(expression, normalized)}
+    return numbers, _aliases_in(normalized, aliases), codes
+
+
+def _specification_period(text: str) -> tuple[str, str] | None:
+    periods = set()
+    for sentence in re.split(r"[,;!?]|\.(?=\s|$)|\n", normalize(text)):
+        if not (match := SPECIFICATION.search(sentence)):
+            continue
+        before, after = sentence[:match.start()], sentence[match.end():]
+        # A dated shipment mentioned alongside a specification is a different event.
+        if not re.search(r"\b(?:постав|достав|отгруз)\w*", after):
+            if period := query_period(after.strip()):
+                periods.add(period)
+                continue
+        if re.search(r"\b(?:подпис|соглас|оформ)\w*", before):
+            if period := query_period(before):
+                periods.add(period)
+    return next(iter(periods)) if len(periods) == 1 else None
+
+
+def _compatible_scopes(scope, prior, alias_numbers: dict[str, set[str]]) -> bool:
+    if any(left and right and not left & right for left, right in zip(scope, prior)):
+        return False
+    if any(left & right for left, right in zip(scope, prior)):
+        return True
+    return any(
+        number in alias_numbers.get(alias, ())
+        for numbers, aliases in ((scope[0], prior[1]), (prior[0], scope[1]))
+        for number in numbers for alias in aliases
+    )
+
+
+def analyze_query(query: str, history: list | None, alias_numbers: dict[str, set[str]]) -> Query:
+    aliases = set(alias_numbers)
     latest, past = _user_turns(query, history)
-    prior = past[-1][:500] if past else ""
     latest = latest[:4000]
     normalized = normalize(latest)
-    latest_numbers = _numbers_in(latest)
-    latest_aliases = _aliases_in(latest, aliases)
-    if addon_number := re.search(r"\b(?:допсоглашен\w*|дополнительн\w+\s+соглашен\w*)\s*№\s*(\d+)\b", normalized):
-        latest_numbers.add(addon_number[1])
+    scope = _scope(latest, aliases)
+    context_turns = []
+    for turn in reversed(past):
+        turn = turn[:500]
+        previous_scope = _scope(turn, aliases)
+        if any(previous_scope):
+            if any(scope) and not _compatible_scopes(scope, previous_scope, alias_numbers):
+                break
+            if not any(scope):
+                scope = previous_scope
+        context_turns.append(turn)
+    numbers, active_aliases, codes = scope
     refs = defaultdict(set)
     for label, value in REFERENCE.findall(normalized):
         if label.startswith("ст"):
@@ -105,25 +165,32 @@ def analyze_query(query: str, history: list | None, aliases: set[str]) -> Query:
         refs[key].add(value)
     if letters := LETTER_REFERENCE.findall(normalized):
         refs["subclause"].update(letters)
-    codes = {key for key, expression in CODE_QUERY if re.search(expression, normalized)}
-    active_aliases = latest_aliases or (_aliases_in(prior, aliases) if not latest_numbers and not codes else set())
     terms = expand_terms(latest)
-    for term, weight in expand_terms(prior).items():
-        terms.setdefault(term, 0.27 * weight)
-    historical_scope = not (latest_aliases or latest_numbers or codes)
-    contextual = latest + ("\nКонтекст предыдущего вопроса: " + prior if prior else "")
+    for distance, turn in enumerate(context_turns, 1):
+        for term, weight in expand_terms(turn).items():
+            terms.setdefault(term, 0.27 * weight / distance)
+    date_turn = next((turn for turn in [latest, *context_turns] if query_period(turn)), latest)
+    period = query_period(date_turn)
+    specification_period = _specification_period(date_turn)
+    if correction := CORRECT_SCOPE.search(date_turn):
+        if corrected_period := query_period(date_turn[correction.end():]):
+            period = corrected_period
+            if specification_period or SPECIFICATION.search(date_turn[:correction.end()]):
+                specification_period = corrected_period
+    user_context = "\n".join(reversed(context_turns))
+    contextual = latest + ("\nКонтекст предыдущих вопросов: " + user_context if user_context else "")
     anchor_terms = {term for alias in active_aliases for term in lexical_terms(alias)}
     anchor_terms.update(lexical_terms("размер количество документ договор рубль месяц день срок"))
     intent_terms = terms.keys() - anchor_terms
     return Query(
-        query, latest, contextual, terms, dict(refs), latest_numbers or (_numbers_in(prior) if historical_scope else set()),
-        active_aliases, codes,
-        query_period(latest) or (query_period(prior) if historical_scope else None),
+        query, latest, contextual, user_context, terms, dict(refs), numbers, active_aliases, codes,
+        period, specification_period,
         bool(re.search(r"\bредакц\w*\s+(?:от|за)\b", normalized)),
         bool(re.search(r"\b(?:сравни\w*|сопостав\w*|различ\w*|раньше и сейчас|до и после)\b", normalized)),
         bool(re.search(r"\b(?:регламент\w*|согласован\w*|одобрен\w*|законодательств\w*|по закону)\b", normalized)),
         bool(re.search(r"\b(?:допсоглашен\w*|дополнительн\w+\s+соглашен\w*)\b", normalized)),
-        intent_terms,
+        intent_terms, {feature for terms in intent_vocabulary(latest)
+                       for feature in lexical_terms(terms.split()[0])},
     )
 
 
@@ -172,6 +239,21 @@ def temporal_status(meta: dict, q: Query) -> str:
     if (start and lo < start) or (end and hi >= end):
         return "period_overlaps_change"
     return "applicable" if start or end else "undated"
+
+
+def amendment_status(meta: dict, q: Query) -> str | None:
+    threshold = meta.get("amendment_application_date")
+    if not threshold:
+        return None
+    if not q.specification_period:
+        return "amendment_trigger_unverified"
+    lo, hi = q.specification_period
+    strict = meta.get("amendment_application_relation") == "после"
+    if hi < threshold or (strict and hi == threshold):
+        return "amendment_not_yet_applicable"
+    if lo < threshold or (strict and lo == threshold):
+        return "amendment_period_overlaps_change"
+    return "amendment_applicable"
 
 
 def reciprocal_fusion(rankings: list[tuple[list[int], float]]) -> dict[int, float]:

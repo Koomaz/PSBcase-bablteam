@@ -23,9 +23,13 @@ class Settings:
     api_timeout: float = 3.0
     build_timeout: float = 12.0
     retries: int = 1
+    reranker_mode: str = "balanced"
 
     @classmethod
     def from_env(cls) -> Settings:
+        mode = os.getenv("RETRIEVAL_RERANKER_MODE", "balanced").strip().lower()
+        if mode not in {"balanced", "legacy", "direct"}:
+            raise ValueError("RETRIEVAL_RERANKER_MODE must be balanced, legacy or direct")
         return cls(
             base_url=os.getenv("LLM_BASE_URL") or os.getenv("OPENAI_BASE_URL", ""),
             api_key=os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY", ""),
@@ -37,6 +41,7 @@ class Settings:
             api_timeout=max(0.1, float(os.getenv("RETRIEVAL_API_TIMEOUT", "3"))),
             build_timeout=max(0.1, float(os.getenv("RETRIEVAL_BUILD_TIMEOUT", "12"))),
             retries=max(0, min(2, int(os.getenv("RETRIEVAL_API_RETRIES", "1")))),
+            reranker_mode=mode,
         )
 
     @property

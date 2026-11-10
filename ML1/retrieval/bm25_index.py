@@ -50,6 +50,18 @@ SYNONYMS = (
     ("компьютер", "компьютеры", "компьютерная техника"),
 )
 
+# Map phrases that describe an operation to its terminology in source documents.
+INTENT_EXPANSIONS = (
+    (r"\b(?:до|перед)\s+(?:получен\w*|поставк\w*|передач\w*|отгрузк\w*)\b",
+     r"\b(?:деньг\w*|плат\w*|оплат\w*|перечисл\w*|расчет\w*|рассчит\w*)\b", "предоплата"),
+    (r"\b(?:упаков\w*|упаковы\w*|упаку\w*|тар[аеуы])\b",
+     r"\b(?:счет\w*|цен\w*|стоимост\w*|плат\w*|оплат\w*|отдельн\w*)\b", "упаковка стоимость цена включает"),
+    (r"\b(?:согласова\w*)\b",
+     r"\b(?:начин\w*|начат\w*|запуск\w*|запуст\w*|инициир\w*)\b", "инициатор согласования"),
+    (r"\b(?:везти|везет|везут|привоз\w*|привез\w*|достав\w*|отгруж\w*)\b",
+     r"\b(?:куда|адрес\w*|склад\w*|спецификац\w*)\b", "адрес доставки"),
+)
+
 
 def stem(word: str) -> str:
     if len(word) > 4 and re.fullmatch(r"[а-я]+", word):
@@ -83,7 +95,16 @@ def expand_terms(text: str) -> dict[str, float]:
             for term in group:
                 for feature in lexical_terms(term):
                     weighted.setdefault(feature, 0.52)
+    for vocabulary in intent_vocabulary(normalized):
+        for feature in lexical_terms(vocabulary):
+            weighted.setdefault(feature, 0.90)
     return weighted
+
+
+def intent_vocabulary(text: str) -> list[str]:
+    normalized = normalize(text)
+    return [terms for first, second, terms in INTENT_EXPANSIONS
+            if re.search(first, normalized) and re.search(second, normalized)]
 
 
 class BM25Index:

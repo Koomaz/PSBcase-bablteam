@@ -42,7 +42,9 @@ def _prompt_module() -> str:
 
 
 def _rewrite_imports(source: str) -> str:
-    return source.replace("from llmguard.", "from ")
+    return source.replace("from ML2.llmguard.", "from ").replace("from llmguard.", "from ").replace(
+        "from .prompt_builder import", "from prompt_builder import",
+    )
 
 
 def build() -> Path:

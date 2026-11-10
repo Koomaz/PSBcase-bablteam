@@ -13,7 +13,7 @@ from .config import CANDIDATE_DEPTH, Settings
 from .diagnostics import retrieval_warnings
 from .embeddings import ModelAPI, ModelAPIError
 from .hybrid_search import (
-    analyze_query, document_match, exact_reference, ordered, reciprocal_fusion, temporal_status,
+    amendment_status, analyze_query, document_match, exact_reference, ordered, reciprocal_fusion, temporal_status,
 )
 from .metadata import canonical_number, normalize
 from .reranker import rerank
@@ -27,14 +27,32 @@ CITATION_FIELDS = (
     "structure_path", "section", "article", "part", "clause", "subclause", "appendix", "amends_clause",
     "provision_effective_date", "amendment_application_date", "amendment_application_relation",
     "page_start", "page_end", "char_start", "char_end", "source_url",
-    "parent_doc_id", "temporal_status",
+    "parent_doc_id", "parent_doc_number", "law_code", "temporal_status", "document_temporal_status", "amendment_status",
 )
-FILTER_FIELDS = frozenset(CITATION_FIELDS) - {"temporal_status", "structure_path", "validity_period"}
+FILTER_FIELDS = frozenset(CITATION_FIELDS) - {
+    "temporal_status", "document_temporal_status", "amendment_status", "structure_path", "validity_period",
+}
 FILTER_FIELDS |= {"law_code", "counterparties", "edition_group", "parent_doc_number"}
 LEGAL_SCOPE = re.compile(
     r"\b(?:договор|закон|норматив|регламент|трудов|работник|налог|ндс|санкци|право|персональн|"
     r"соглашен|судеб|аренд|поставк|неустойк|архив|претензи|взыскан|обязательств)\w*\b", re.I
 )
+
+
+def resolve_kb_source(directory: str | Path) -> Path:
+    directory = Path(directory)
+    for name in ("knowledge-base.zip", "knowledge_base.zip", "kb.zip"):
+        source = directory / name
+        if source.is_file():
+            return source
+    for name in ("knowledge-base", "knowledge_base"):
+        source = directory / name
+        if source.is_dir():
+            return source
+    raise FileNotFoundError(
+        f"Knowledge base not found in {directory}. Expected knowledge-base.zip, "
+        "knowledge_base.zip, kb.zip, knowledge-base/ or knowledge_base/."
+    )
 
 
 class Retriever:
@@ -44,14 +62,25 @@ class Retriever:
         self._index = indexes
         self._api = ModelAPI(settings)
         self._settings = settings
-        self._aliases = {
-            normalize(name) for doc in indexes.documents for name in doc["counterparties"]
-            if normalize(name) != "меридиан"
-        }
+        self._alias_numbers = defaultdict(set)
+        for doc in indexes.documents:
+            for name in doc["counterparties"]:
+                alias = normalize(name)
+                if alias != "меридиан":
+                    numbers = (doc["doc_number"], doc["parent_doc_number"])
+                    self._alias_numbers[alias].update(canonical_number(number) for number in numbers if number)
         self._known_numbers = {
             canonical_number(doc["doc_number"]) for doc in indexes.documents if doc["doc_number"]
         }
         self._core_terms = [set(lexical_terms(chunk.text)) for chunk in indexes.chunks]
+        self._amendments = defaultdict(list)
+        self._provisions = defaultdict(list)
+        for i, chunk in enumerate(indexes.chunks):
+            meta = chunk.metadata
+            if meta["parent_doc_id"] and meta["amends_clause"]:
+                self._amendments[meta["parent_doc_id"], meta["amends_clause"]].append(i)
+            if meta["doc_type"] == "contract" and meta["clause"]:
+                self._provisions[chunk.doc_id, meta["clause"]].append(i)
 
     @classmethod
     def from_artifacts(cls, directory: str | Path = "artifacts", *, settings: Settings | None = None) -> Retriever:
@@ -66,18 +95,7 @@ class Retriever:
     def from_data_dir(cls, directory: str | Path | None = None, *,
                       settings: Settings | None = None, dense: bool = True) -> Retriever:
         directory = Path(directory or os.getenv("DATA_DIR", "data"))
-        for name in ("knowledge-base.zip", "knowledge_base.zip", "kb.zip"):
-            source = directory / name
-            if source.is_file():
-                return cls.from_source(source, settings=settings, dense=dense)
-        for name in ("knowledge-base", "knowledge_base"):
-            source = directory / name
-            if source.is_dir():
-                return cls.from_source(source, settings=settings, dense=dense)
-        raise FileNotFoundError(
-            f"Knowledge base not found in {directory}. Expected knowledge-base.zip, "
-            "knowledge_base.zip, kb.zip, knowledge-base/ or knowledge_base/."
-        )
+        return cls.from_source(resolve_kb_source(directory), settings=settings, dense=dense)
 
     @property
     def manifest(self) -> dict:
@@ -128,7 +146,7 @@ class Retriever:
         if not isinstance(top_k, int) or top_k < 0:
             raise ValueError("top_k must be a non-negative integer")
         index = self._index
-        q = analyze_query(query, history, self._aliases)
+        q = analyze_query(query, history, self._alias_numbers)
         bm25, local, dense, fusion, reranked = {}, {}, {}, {}, {}
         warnings = []
         mode = "local_tfidf"
@@ -171,6 +189,10 @@ class Retriever:
             }
             if q.refs and not exact:
                 warnings.append("exact_reference_not_found")
+            if q.refs and not anchored and not q.regulations and len({
+                index.chunks[i].doc_id for i in exact
+            }) > 1:
+                warnings.append("ambiguous_document_scope")
             dates, adjusted, coverage = {}, {}, {}
             has_specific_scope = bool(matching and not q.regulations)
             for i in fusion.keys() | exact:
@@ -179,6 +201,8 @@ class Retriever:
                 if has_specific_scope and i not in matching:
                     continue
                 if anchored and not matching and not q.regulations:
+                    continue
+                if matching and i not in matching and kind in {"contract", "addendum"}:
                     continue
                 if q.refs and i not in exact:
                     continue
@@ -196,6 +220,8 @@ class Retriever:
                     continue
                 status = dates[i] = temporal_status(meta, q)
                 score = fusion.get(i, 0) * (0.65 + min(coverage[i], 22) / 32)
+                if self._core_terms[i] & q.operation_terms:
+                    score *= 1.52
                 if meta["section"] and "реквизиты" in normalize(meta["section"]) and "реквизиты" not in q.terms:
                     score *= 0.35
                 if i in matching:
@@ -218,6 +244,7 @@ class Retriever:
                     elif status == "historical_version_missing":
                         score *= 0.72
                 adjusted[i] = score
+            self._pair_amendments(q, adjusted, coverage, dates, eligible)
             ranking = ordered(adjusted)
             if not q.comparative:
                 applicable_groups = {
@@ -236,11 +263,7 @@ class Retriever:
                         head = ranking[:self._settings.reranker_top_n]
                         results = rerank(self._api, q.contextual, [index.chunks[i].text_with_context for i in head])
                         reranked = {head[i]: score for i, score in results.items()}
-                        # Blend ranks within the head while keeping exact and temporal priorities.
-                        bonus = reciprocal_fusion([(ordered(reranked), 0.34)])
-                        for i in head:
-                            adjusted[i] *= 1 + bonus[i]
-                        ranking = sorted(head, key=lambda i: (-adjusted[i], i)) + ranking[len(head):]
+                        ranking = self._rerank_head(head, ranking[len(head):], reranked, adjusted, dates, exact, q)
                     except ModelAPIError as exc:
                         warnings.append(f"reranker_unavailable:{exc}")
                 else:
@@ -249,16 +272,19 @@ class Retriever:
             selected = []
             seen = defaultdict(int)
             best_score = adjusted[ranking[0]] if ranking else 0.0
-            for i in ranking:
-                if len(selected) == top_k or adjusted[i] < best_score * 0.23:
+            for i in self._prioritize_related(ranking, top_k):
+                if len(selected) == top_k:
                     break
+                if adjusted[i] < best_score * 0.23 and not any(i in self._related(j) for j in selected):
+                    continue
                 row = index.chunks[i]
                 meta = row.metadata
                 key = (row.doc_id, meta["article"], meta["clause"], meta["part"], meta["subclause"], meta["section"])
-                # Deduplicate overlapping windows while retaining independent paragraphs in the same article.
+                # Retain split windows that add new source text, even if they overlap at the boundary.
                 if any(
-                    row.doc_id == index.chunks[j].doc_id and meta["char_start"] < index.chunks[j].metadata["char_end"]
-                    and index.chunks[j].metadata["char_start"] < meta["char_end"] for j in selected
+                    row.doc_id == index.chunks[j].doc_id
+                    and index.chunks[j].metadata["char_start"] <= meta["char_start"]
+                    and meta["char_end"] <= index.chunks[j].metadata["char_end"] for j in selected
                 ):
                     continue
                 if seen[key] >= max(3, top_k // 2) and i not in exact:
@@ -279,10 +305,16 @@ class Retriever:
         diagnostics = {
             "query": query, "normalized_query": normalize(q.latest),
             "contextual_query": q.contextual, "event_period": list(q.period) if q.period else None,
-            "mode": mode, "warnings": warnings,
+            "user_context": q.user_context,
+            "specification_period": list(q.specification_period) if q.specification_period else None,
+            "resolved_scope": {
+                "document_numbers": sorted(q.numbers), "counterparties": sorted(q.aliases), "law_codes": sorted(q.codes),
+            },
+            "mode": mode, "reranker_mode": self._settings.reranker_mode if reranked else None, "warnings": warnings,
             "confidence": "low" if not final or any(
                 name in warnings for name in ("historical_or_date_coverage_unverified",
-                                              "applicable_edition_unconfirmed", "document_identifier_not_found")
+                                              "applicable_edition_unconfirmed", "document_identifier_not_found",
+                                              "ambiguous_document_scope")
             ) else "strong_signal" if final[0].score_details["exact_match"] or
                 final[0].score_details["term_evidence"] >= 7 else "review",
             "sources": [row.citation_payload for row in final],
@@ -297,11 +329,96 @@ class Retriever:
             diagnostics["parse_issues"] = copy.deepcopy(index.manifest["issues"])
         return final, diagnostics
 
+    def _related(self, i: int) -> list[int]:
+        meta = self._index.chunks[i].metadata
+        if meta["parent_doc_id"] and meta["amends_clause"]:
+            return self._provisions.get((meta["parent_doc_id"], meta["amends_clause"]), [])
+        return self._amendments.get((meta["doc_id"], meta["clause"]), [])
+
+    def _amendment_status(self, i: int, q) -> str | None:
+        meta = self._index.chunks[i].metadata
+        if meta["doc_type"] == "addendum":
+            return amendment_status(meta, q)
+        states = {
+            amendment_status(self._index.chunks[j].metadata, q) for j in self._related(i)
+        }
+        if states == {"amendment_applicable"}:
+            return "superseded_by_amendment"
+        return None
+
+    def _pair_amendments(self, q, scores: dict, coverage: dict, dates: dict, eligible: set[int]) -> None:
+        for i in ordered(scores):
+            for j in self._related(i):
+                if j in eligible and j not in scores:
+                    scores[j] = scores[i] * 0.86
+                    coverage[j] = 0.0
+                    dates[j] = temporal_status(self._index.chunks[j].metadata, q)
+        for i in scores:
+            status = self._amendment_status(i, q)
+            if status in {"amendment_not_yet_applicable", "superseded_by_amendment"}:
+                scores[i] *= 0.58
+            if status == "amendment_applicable":
+                scores[i] *= 1.30
+            if any(self._amendment_status(j, q) == "amendment_not_yet_applicable" for j in self._related(i)):
+                scores[i] *= 1.25
+        if not q.comparative:
+            for i in scores:
+                if self._amendment_status(i, q) not in {"amendment_not_yet_applicable", "superseded_by_amendment"}:
+                    continue
+                partner_score = max((scores[j] for j in self._related(i) if j in scores), default=None)
+                if partner_score is not None:
+                    scores[i] = min(scores[i], partner_score * 0.85)
+
+    def _prioritize_related(self, ranking: list[int], top_k: int) -> list[int]:
+        if top_k < 2 or not ranking:
+            return ranking
+        first, *tail = ranking
+        related = set(self._related(first))
+        return [first, *(i for i in tail if i in related), *(i for i in tail if i not in related)]
+
+    def _rerank_head(self, head, tail, reranked, adjusted, dates, exact, q) -> list[int]:
+        mode = self._settings.reranker_mode
+        semantic = ordered(reranked)
+        if mode == "legacy":
+            bonus = reciprocal_fusion([(semantic, 0.34)])
+            for i in head:
+                adjusted[i] *= 1 + bonus[i]
+            return ordered({i: adjusted[i] for i in head}) + tail
+
+        rank_score = {
+            i: 1 - rank / max(1, len(head) - 1) for rank, i in enumerate(semantic)
+        }
+        weight = 1.0 if mode == "direct" else 0.60
+        scale = adjusted[head[0]]
+        blended = {i: weight * rank_score[i] + (1 - weight) * adjusted[i] / scale for i in head}
+
+        def priority(i):
+            outside = dates[i] in {"superseded", "outside_period", "historical_version_missing"}
+            amendment = self._amendment_status(i, q)
+            background = amendment in {"amendment_not_yet_applicable", "superseded_by_amendment"}
+            return (not q.comparative and (outside or background), i not in exact, -blended[i], i)
+
+        ordered_head = sorted(head, key=priority)
+        for i in ordered_head:
+            adjusted[i] = scale * (0.70 + 0.30 * blended[i])
+        return ordered_head + tail
+
+    def _source(self, i, q) -> tuple[dict, dict]:
+        chunk = self._index.chunks[i]
+        meta = copy.deepcopy(chunk.metadata)
+        meta["document_temporal_status"] = temporal_status(meta, q)
+        meta["amendment_status"] = self._amendment_status(i, q)
+        meta["temporal_status"] = meta["document_temporal_status"]
+        if meta["amendment_status"] and meta["temporal_status"] not in {"outside_period", "superseded"}:
+            meta["temporal_status"] = meta["amendment_status"]
+        citation = {key: copy.deepcopy(meta.get(key)) for key in CITATION_FIELDS}
+        citation.update(chunk_id=chunk.chunk_id, source_reference=chunk.source_reference)
+        return meta, citation
+
     def _result(self, i: int, q, score: float, scores: dict) -> RetrievedChunk:
         chunks = self._index.chunks
         chunk = chunks[i]
-        meta = copy.deepcopy(chunk.metadata)
-        meta["temporal_status"] = temporal_status(meta, q)
+        meta, citation = self._source(i, q)
         neighbors = []
         for j in (i - 1, i + 1):
             if 0 <= j < len(chunks):
@@ -309,14 +426,14 @@ class Retriever:
                 if other.doc_id == chunk.doc_id and all(other.metadata[key] == meta[key] for key in (
                     "article", "section", "appendix"
                 )):
+                    neighbor_meta, neighbor_citation = self._source(j, q)
                     neighbors.append({
                         "chunk_id": other.chunk_id, "text": other.text,
                         "source_reference": other.source_reference,
                         "char_start": other.metadata["char_start"], "char_end": other.metadata["char_end"],
-                        "temporal_status": temporal_status(other.metadata, q),
+                        "temporal_status": neighbor_meta["temporal_status"],
+                        "metadata": neighbor_meta, "citation_payload": neighbor_citation,
                     })
-        citation = {key: copy.deepcopy(meta[key]) for key in CITATION_FIELDS}
-        citation.update(chunk_id=chunk.chunk_id, source_reference=chunk.source_reference)
         return RetrievedChunk(
             chunk.chunk_id, chunk.text, chunk.text_with_context, chunk.source_reference,
             meta, score, scores, citation, neighbors,

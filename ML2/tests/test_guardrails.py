@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from llmguard.citations import human_reference, render_citations
 from llmguard.csvio import normalize_for_csv, read_questions, read_submission, write_submission
 from llmguard.evidence import build_evidence, parse_question, premise_warnings
-from llmguard.prompt_builder import build_messages, load_system_prompt
+from llmguard.prompt_builder import build_messages, load_system_prompt, render_evidence
 from llmguard.validator import clean_text, fallback_refusal, validate
 from solution import LegalAssistant
 
@@ -87,6 +87,24 @@ class TestEvidence(unittest.TestCase):
     def test_max_items(self):
         items = build_evidence([chunk(f"c{i}", f"текст {i}") for i in range(10)], max_items=3)
         self.assertEqual(len(items), 3)
+
+    def test_neighbor_uses_own_locator_and_respects_rendered_budget(self):
+        leading = chunk("main", "Один фрагмент", doc_type="law", doc_number="152-ФЗ", article="9", part="2")
+        leading.neighboring_context = [
+            {"chunk_id": "adjacent", "text": "Другой фрагмент", "source_reference": "152-ФЗ, ст. 9, ч. 1",
+             "citation_payload": {"doc_type": "law", "doc_number": "152-ФЗ", "article": "9", "part": "1"}},
+        ]
+        evidence = build_evidence([leading])
+        self.assertEqual(human_reference(evidence[1]), "ч. 1 ст. 9 Закона № 152-ФЗ")
+        budget = len(render_evidence(evidence)) - 1
+        bounded = build_evidence([leading], max_total_chars=budget)
+        self.assertEqual(len(bounded), 1)
+        self.assertLessEqual(len(render_evidence(bounded)), budget)
+
+    def test_long_items_keep_tails_and_identical_prefixes(self):
+        prefix = "Положение " * 125
+        evidence = build_evidence([chunk("one", prefix + "Исключение"), chunk("two", prefix + "Срок")])
+        self.assertEqual([item["text"] for item in evidence], [prefix + "Исключение", prefix + "Срок"])
 
     def test_premise_number(self):
         items = build_evidence([chunk("c1", "3.1. Арендная плата составляет 450 000 рублей в месяц.")])
@@ -200,6 +218,9 @@ class TestCitations(unittest.TestCase):
     def test_law_reference(self):
         self.assertEqual(human_reference(self.items[1]), "ст. 70 ТК РФ")
         self.assertEqual(human_reference(self.items[2]), "ч. 1 ст. 9 Закона № 152-ФЗ")
+        self.assertEqual(human_reference({"meta": {"doc_type": "law", "law_code": "НК",
+                                                   "article": "284", "clause": "1.8-1"}}),
+                         "п. 1.8-1 ст. 284 НК РФ")
 
     def test_regulation_keeps_edition(self):
         self.assertEqual(human_reference(self.items[3]), "п. 2.4 регламента в ред. от 10.01.2023")

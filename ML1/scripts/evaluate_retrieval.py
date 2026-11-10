@@ -164,5 +164,5 @@ if __name__ == "__main__":
     args = parser.parse_args()
     report = evaluate(args.artifacts, args.questions, args.online)
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(report + "\n", encoding="utf-8")
+    args.output.write_text(report.rstrip() + "\n", encoding="utf-8", newline="\n")
     print(f"Wrote {args.output}")

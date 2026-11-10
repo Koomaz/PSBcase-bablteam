@@ -7,7 +7,7 @@ from concurrent.futures import CancelledError, Future
 import logging
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from threading import Lock
 from typing import Awaitable, Callable, Literal
@@ -19,10 +19,11 @@ LOG = logging.getLogger(__name__)
 
 FLAT_RUNTIME = Path(__file__).with_name("retrieval_runtime.py").is_file()
 if FLAT_RUNTIME:
-    from retrieval_runtime import Chunk, RetrievedChunk, Retriever, Settings, build_indexes
+    from retrieval_runtime import Chunk, RetrievedChunk, Retriever, Settings, build_indexes, resolve_kb_source
 else:
     from ML1.retrieval import RetrievedChunk, Retriever, Settings
     from ML1.retrieval.artifacts import build_indexes
+    from ML1.retrieval.retriever import resolve_kb_source
     from ML1.retrieval.schemas import Chunk
 
 ANSWER_LIMIT = 10_000
@@ -309,7 +310,7 @@ class ML2Generator:
         model = _BlockingModel(self.proxy)
         assistant = self.assistant_class(
             retriever=None, llm=model, max_tokens=self.max_tokens, system_prompt=self.system_prompt,
-            temperature=self.temperature,
+            temperature=self.temperature, cite_style="id",
         )
         history = [{"role": turn.role, "content": turn.content} for turn in question.history]
         try:
@@ -342,9 +343,17 @@ def create_service(
 ) -> Service:
     if generator is None:
         generator = ML2Generator(client)
-    # In-memory index from the supplied archive, without optional network models.
-    settings = Settings()
-    indexes = build_indexes(directory / "knowledge-base.zip", settings, dense=False)
+    mode = os.getenv("PSB_RETRIEVAL_MODE", "local").strip().lower()
+    if mode not in {"local", "bge", "bge_qwen"}:
+        raise ValueError("PSB_RETRIEVAL_MODE must be local, bge or bge_qwen")
+    settings = Settings() if mode == "local" else Settings.from_env()
+    if mode != "bge_qwen":
+        settings = replace(settings, reranker_top_n=0)
+    indexes = build_indexes(resolve_kb_source(directory), settings, dense=mode != "local")
+    LOG.info("Retrieval requested=%s embedding=%s reranker=%s limitations=%s",
+             mode, indexes.manifest["embedding_model"] or "local_tfidf",
+             settings.reranker_model if settings.configured and settings.reranker_top_n else "disabled",
+             indexes.manifest["known_limitations"])
     retriever = Retriever(indexes, settings)
     return Service(
         retriever,
