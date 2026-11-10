@@ -26,6 +26,22 @@ from llmguard.prompt_builder import build_messages, build_repair_message, load_s
 from llmguard.validator import fallback_refusal, validate
 
 
+def load_dotenv(path: str | Path | None = None) -> None:
+    """Читает ML2/.env (KEY=VALUE), не перетирая уже заданные переменные окружения."""
+    env_path = Path(path) if path else Path(__file__).resolve().parent / ".env"
+    if not env_path.is_file():
+        return
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+
 def _import_retriever():
     """На платформе рядом лежит retrieval_runtime.py; локально пакет ML1/retrieval."""
     try:
@@ -184,6 +200,8 @@ def _resolve_data_dir(explicit: str | None) -> Path:
 
 
 def main(argv: list[str] | None = None) -> int:
+    load_dotenv()
+
     parser = argparse.ArgumentParser(description="PSB Legal Assistant — генерация ответов (ML2)")
     parser.add_argument("--questions", help="CSV с вопросами (id,question)")
     parser.add_argument("--data-dir", help="каталог данных платформы")
