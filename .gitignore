@@ -1,0 +1,8 @@
+__pycache__/
+.venv/
+.env
+/data/
+/dist/
+/submission.csv
+.env.*
+!.env.example

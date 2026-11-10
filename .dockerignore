@@ -1,0 +1,15 @@
+**
+!Dockerfile
+!requirements-api.txt
+!psb_backend.py
+!web_api.py
+!solution.py
+!ML1/
+!ML1/retrieval/
+!ML1/retrieval/*.py
+!ML2/
+!ML2/solution.py
+!ML2/llmguard/
+!ML2/llmguard/*.py
+!ML2/prompts/
+!ML2/prompts/system_prompt.md
