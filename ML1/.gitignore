@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.env
+.env.*
+!*.example
+/knowledge-base/
+/data/
+/artifacts/.build.lock/
+/artifacts/.index-*/

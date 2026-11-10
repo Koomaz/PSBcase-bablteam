@@ -1,0 +1,1 @@
+# Retrieval uses Python 3.10+ standard library only.

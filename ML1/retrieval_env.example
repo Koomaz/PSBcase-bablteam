@@ -1,0 +1,14 @@
+# Read from the process environment. Populate only with the organizer's proxy settings.
+LLM_BASE_URL=
+LLM_API_KEY=
+# OPENAI_BASE_URL and OPENAI_API_KEY are accepted as alternative names.
+EMB_MODEL=BAAI/bge-m3
+# Copy the actual Qwen3 Reranker 8B model ID provided by the platform.
+RERANKER_MODEL=
+RERANKER_TOP_N=20
+RETRIEVAL_EMBEDDING_PATH=/embeddings
+RETRIEVAL_RERANKER_PATH=/rerank
+RETRIEVAL_API_TIMEOUT=3
+RETRIEVAL_BUILD_TIMEOUT=12
+RETRIEVAL_API_RETRIES=1
+DATA_DIR=data
