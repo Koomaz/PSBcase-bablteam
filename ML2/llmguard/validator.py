@@ -61,6 +61,18 @@ def _numbers(text: str) -> set[str]:
     return out
 
 
+def question_parts(question: str) -> int:
+    """Грубая оценка числа частей вопроса: «какая плата и до какого числа» — две."""
+    text = (question or "").strip()
+    if not text:
+        return 1
+    parts = 1
+    parts += len(re.findall(r";", text))
+    parts += len(re.findall(r",?\s+и\s+(?=до|как|кто|что|когда|какой|какую|какие|сколько|где|зачем|почему|можно|нужно|обязан)", text, re.I))
+    parts += len(re.findall(r"\?", text)) - 1 if text.count("?") > 1 else 0
+    return max(1, min(parts, 4))
+
+
 def clean_text(answer: str) -> str:
     text = (answer or "").replace("\r", " ")
     text = re.sub(r"</?[A-Za-z][^>]{0,40}>", " ", text)          # случайные XML-теги
@@ -101,6 +113,15 @@ def validate(
         for eid in unknown:
             cleaned = re.sub(r"\[\s*[EЕ]\s*%s\s*\]" % eid[1:], "", cleaned)
 
+    # Отказ — это когда ПЕРВОЕ предложение говорит об отсутствии данных.
+    # «...в документах нет» в конце разбора ложной посылки отказом не является.
+    lowered = cleaned.lower()
+    first_sentence = re.split(r"(?<=[.!?])\s", lowered, maxsplit=1)[0]
+    marker_hit = any(marker in lowered for marker in REFUSAL_MARKERS)
+    is_refusal = any(marker in first_sentence for marker in REFUSAL_MARKERS) or (
+        marker_hit and not citations
+    )
+
     words = len(WORD_RE.findall(cleaned))
     if not cleaned:
         issues.append("пустой ответ")
@@ -113,17 +134,21 @@ def validate(
             )
         if words < min_words and not citations:
             issues.append(f"ответ слишком короткий ({words} слов)")
+        elif not is_refusal and words < 18 and question:
+            parts = question_parts(question)
+            if parts > 1:
+                issues.append(
+                    f"вопрос содержит {parts} части, а ответ — {words} слов: похоже, "
+                    "часть вопроса осталась без ответа"
+                )
+            else:
+                issues.append(
+                    f"ответ слишком короткий для целевого объёма ({words} слов): "
+                    "нужен развёрнутый ответ с основанием и ссылкой"
+                )
         elif words > max_words:
             issues.append(f"ответ длиннее лимита: {words} слов при пределе {max_words}")
 
-    # Отказ — это когда ПЕРВОЕ предложение говорит об отсутствии данных.
-    # «...в документах нет» в конце разбора ложной посылки отказом не является.
-    lowered = cleaned.lower()
-    first_sentence = re.split(r"(?<=[.!?])\s", lowered, maxsplit=1)[0]
-    marker_hit = any(marker in lowered for marker in REFUSAL_MARKERS)
-    is_refusal = any(marker in first_sentence for marker in REFUSAL_MARKERS) or (
-        marker_hit and not citations
-    )
     if items and is_refusal and not citations:
         issues.append(
             "похоже на необоснованный отказ: в доказательствах есть релевантные фрагменты, "

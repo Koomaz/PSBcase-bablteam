@@ -82,8 +82,14 @@ def build_evidence(
     chunks: Sequence[Any],
     max_items: int = 6,
     max_total_chars: int = MAX_TOTAL_CHARS,
+    max_neighbors: int = 3,
 ) -> list[dict[str, Any]]:
-    """Строит нумерованный список доказательств, убирая дубли и пустые чанки."""
+    """Строит нумерованный список доказательств, убирая дубли и пустые чанки.
+
+    К найденным фрагментам добавляются соседние положения из `neighboring_context`:
+    ML1 отдаёт их бесплатно, а нужный пункт часто стоит вплотную к найденному
+    (например, п. 3.3 между 3.2 и 3.4 по вопросу об арендной плате).
+    """
     items: list[dict[str, Any]] = []
     seen_ids: set[str] = set()
     seen_text: set[str] = set()
@@ -119,6 +125,34 @@ def build_evidence(
                 "meta": _meta_summary(meta),
             }
         )
+
+    if max_neighbors > 0 and items:
+        taken = 0
+        for chunk in list(chunks)[:2]:
+            if taken >= max_neighbors:
+                break
+            for neighbor in getattr(chunk, "neighboring_context", None) or []:
+                if taken >= max_neighbors or len(items) >= max_items + max_neighbors:
+                    break
+                chunk_id = neighbor.get("chunk_id") or ""
+                text = (neighbor.get("text") or "").strip()
+                if not text or chunk_id in seen_ids:
+                    continue
+                fingerprint = re.sub(r"\s+", " ", text.lower())[:220]
+                if fingerprint in seen_text:
+                    continue
+                seen_ids.add(chunk_id)
+                seen_text.add(fingerprint)
+                taken += 1
+                items.append(
+                    {
+                        "eid": f"E{len(items) + 1}",
+                        "chunk_id": chunk_id,
+                        "source": neighbor.get("source_reference") or "",
+                        "text": text[:MAX_ITEM_CHARS],
+                        "meta": {"temporal_status": neighbor.get("temporal_status"), "neighbor": True},
+                    }
+                )
 
     return items
 

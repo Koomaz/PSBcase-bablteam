@@ -9,7 +9,23 @@ import re
 import time
 import urllib.error
 import urllib.request
+from pathlib import Path
 from typing import Any, Sequence
+
+
+def load_dotenv(path: str | None = None) -> None:
+    """Читает ML2/.env, не перетирая уже заданные переменные окружения."""
+    env_path = Path(path) if path else Path(__file__).resolve().parent.parent / ".env"
+    if not env_path.is_file():
+        return
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key, value = key.strip(), value.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = value
 
 
 class LLMError(RuntimeError):
@@ -157,6 +173,7 @@ class MockClient:
 
 def make_client():
     """Возвращает боевой клиент либо заглушку, если доступ к модели не настроен."""
+    load_dotenv()
     client = ChatClient.from_env()
     if client.configured and os.getenv("MOCK_LLM", "").lower() not in ("1", "true", "yes"):
         return client

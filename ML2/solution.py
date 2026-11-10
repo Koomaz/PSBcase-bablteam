@@ -19,27 +19,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from llmguard.client import LLMError, make_client
+from llmguard.client import LLMError, load_dotenv, make_client
 from llmguard.csvio import find_questions_file, read_questions, write_submission
 from llmguard.evidence import build_evidence, parse_question, premise_warnings, summarize_diagnostics
 from llmguard.prompt_builder import build_messages, build_repair_message, load_system_prompt
 from llmguard.validator import ensure_premise_ack, fallback_refusal, validate
-
-
-def load_dotenv(path: str | Path | None = None) -> None:
-    """Читает ML2/.env (KEY=VALUE), не перетирая уже заданные переменные окружения."""
-    env_path = Path(path) if path else Path(__file__).resolve().parent / ".env"
-    if not env_path.is_file():
-        return
-    for line in env_path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        key = key.strip()
-        value = value.strip().strip('"').strip("'")
-        if key and key not in os.environ:
-            os.environ[key] = value
 
 
 def _import_retriever():
@@ -86,6 +70,7 @@ class LegalAssistant:
         llm: Any = None,
         top_k: int = 6,
         max_evidence: int = 6,
+        max_neighbors: int = 3,
         max_words: int = 180,
         max_attempts: int = 2,
         max_tokens: int = 700,
@@ -96,6 +81,7 @@ class LegalAssistant:
         self.llm = llm or make_client()
         self.top_k = top_k
         self.max_evidence = max_evidence
+        self.max_neighbors = max_neighbors
         self.max_words = max_words
         self.max_attempts = max(1, max_attempts)
         self.max_tokens = max_tokens
@@ -122,7 +108,9 @@ class LegalAssistant:
         started = time.perf_counter()
         question, history = parse_question(raw_question)
         chunks, diagnostics = self.retrieve(question, history)
-        items = build_evidence(chunks, max_items=self.max_evidence)
+        items = build_evidence(
+            chunks, max_items=self.max_evidence, max_neighbors=self.max_neighbors
+        )
         warnings = premise_warnings(question, items)
         # Автоматическую преамбулу ставим только по числам: у названий есть падежи,
         # и ложное «посылка не подтверждается» хуже, чем отсутствие фразы.
