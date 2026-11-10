@@ -1,2 +1,2 @@
 # PSBcase-bablteam
-Hacaton repo
+Hackathon repo
