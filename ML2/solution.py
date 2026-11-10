@@ -14,7 +14,9 @@ import argparse
 import json
 import os
 import sys
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -73,7 +75,7 @@ class LegalAssistant:
         max_neighbors: int = 3,
         max_words: int = 180,
         max_attempts: int = 2,
-        max_tokens: int = 700,
+        max_tokens: int | None = None,
         system_prompt: str | None = None,
         trace_path: str | Path | None = None,
     ) -> None:
@@ -84,9 +86,13 @@ class LegalAssistant:
         self.max_neighbors = max_neighbors
         self.max_words = max_words
         self.max_attempts = max(1, max_attempts)
-        self.max_tokens = max_tokens
+        env_tokens = os.getenv("MAX_TOKENS", "").strip()
+        self.max_tokens = max_tokens or max(600, int(env_tokens) if env_tokens.isdigit() else 700)
+        env_temp = os.getenv("TEMPERATURE", "").strip()
+        self.temperature = float(env_temp) if env_temp else 0.0
         self.system_prompt = system_prompt or load_system_prompt()
         self.trace_path = Path(trace_path) if trace_path else None
+        self._trace_lock = threading.Lock()
         if self.trace_path:
             self.trace_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -136,10 +142,12 @@ class LegalAssistant:
             attempts = attempt + 1
             budget = self.max_tokens if attempt == 0 else self.max_tokens * 2
             try:
-                raw = self.llm.complete(messages, temperature=0.0, max_tokens=budget)
+                raw = self.llm.complete(messages, temperature=self.temperature, max_tokens=budget)
                 if getattr(self.llm, "last_finish_reason", None) == "length":
                     # упёрлись в лимит — один раз пробуем с удвоенным бюджетом
-                    raw = self.llm.complete(messages, temperature=0.0, max_tokens=budget * 2)
+                    raw = self.llm.complete(
+                        messages, temperature=self.temperature, max_tokens=budget * 2
+                    )
             except LLMError as exc:
                 result = validate("", items, self.max_words, question=question, premise_conflicts=conflicts)
                 result.issues.append(f"сбой вызова модели: {exc}")
@@ -197,15 +205,17 @@ class LegalAssistant:
             "warnings": answer.diagnostics.get("warnings"),
             "elapsed_ms": answer.elapsed_ms,
         }
-        with self.trace_path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+        with self._trace_lock:
+            with self.trace_path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
 def _resolve_data_dir(explicit: str | None) -> Path:
     if explicit:
         return Path(explicit)
+    # Регламент: DATA_DIR задаёт платформа, при отсутствии — каталог "data".
     env = os.getenv("DATA_DIR") or os.getenv("INPUT_DIR")
-    return Path(env) if env else Path.cwd()
+    return Path(env) if env else Path("data")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -217,6 +227,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out", default="submission.csv", help="куда писать результат")
     parser.add_argument("--top-k", type=int, default=int(os.getenv("TOP_K", "6")))
     parser.add_argument("--limit", type=int, default=0, help="обработать только первые N вопросов")
+    parser.add_argument("--workers", type=int, default=0, help="число потоков (по умолчанию MAX_WORKERS или 4)")
     parser.add_argument("--trace", default="answers_trace.jsonl")
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args(argv)
@@ -257,13 +268,26 @@ def main(argv: list[str] | None = None) -> int:
         trace_path=args.trace,
     )
 
+    workers = args.workers or int(os.getenv("MAX_WORKERS", "0") or 0)
+    workers = max(1, min(workers or 4, 8))
+
+    def run_one(pair: tuple[str, str]) -> Answer:
+        return assistant.answer(*pair)
+
+    started_answers = time.perf_counter()
+    if workers > 1 and len(rows) > 4:
+        print(f"Параллельно, потоков: {workers}", file=sys.stderr)
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            results = list(pool.map(run_one, rows))
+    else:
+        results = [run_one(row) for row in rows]
+
     answers: list[tuple[str, str]] = []
-    for index, (qid, question) in enumerate(rows, start=1):
-        answer = assistant.answer(qid, question)
-        answers.append((qid, answer.text))
+    for answer in results:  # порядок строк сохраняется
+        answers.append((answer.qid, answer.text))
         if args.verbose:
             flag = "OK " if not answer.issues else "FIX"
-            print(f"[{flag}] {qid}: {answer.evidence_count} док. · {answer.elapsed_ms} мс · "
+            print(f"[{flag}] {answer.qid}: {answer.evidence_count} док. · {answer.elapsed_ms} мс · "
                   f"{answer.citations} {('| ' + '; '.join(answer.issues)) if answer.issues else ''}",
                   file=sys.stderr)
 

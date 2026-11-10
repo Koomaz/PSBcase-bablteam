@@ -54,7 +54,14 @@ class ChatClient:
     def from_env(cls) -> "ChatClient":
         base = os.getenv("LLM_BASE_URL") or os.getenv("OPENAI_BASE_URL", "")
         key = os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY", "")
-        model = os.getenv("LLM_MODEL") or os.getenv("MODEL_NAME") or "deepseek-v4.1-flash"
+        # Регламент: идентификатор модели и параметры приходят из окружения.
+        model = (
+            os.getenv("LLM_MODEL")
+            or os.getenv("OPENAI_MODEL")
+            or os.getenv("GEN_MODEL")
+            or os.getenv("MODEL_NAME")
+            or "deepseek-v4.1-flash"
+        )
         timeout = float(os.getenv("LLM_TIMEOUT", "45"))
         retries = int(os.getenv("LLM_RETRIES", "2"))
         return cls(model=model, base_url=base, api_key=key, timeout=timeout, retries=retries)

@@ -41,7 +41,13 @@ def _current_date() -> str:
 
 def load_system_prompt(path: str | Path | None = None, today: str | None = None) -> str:
     source = Path(path) if path else PROMPT_PATH
-    text = source.read_text(encoding="utf-8").strip()
+    if source.is_file():
+        text = source.read_text(encoding="utf-8").strip()
+    else:
+        # в ZIP-сабмите .md не переносится: промпт лежит в system_prompt.py
+        from system_prompt import SYSTEM_PROMPT as text  # type: ignore
+
+        text = str(text).strip()
     return text.replace("{{CURRENT_DATE}}", today or _current_date())
 
 

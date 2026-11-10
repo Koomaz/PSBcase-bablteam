@@ -52,6 +52,39 @@ python3 -m unittest discover -s tests -v
 | `MOCK_LLM` | `1` — заглушка без сети | — |
 | `EVENT_DATE` | дата, на которую определяются редакции | сегодня |
 
+## Сабмит по техрегламенту
+
+Регламент переносит в среду проверки **только корневые `.py` и `requirements.txt`**,
+поэтому рабочий пакет `llmguard/` и промпт из `prompts/*.md` в таком виде не доедут.
+Сборка разворачивает всё в плоский архив:
+
+```bash
+python3 build_submission.py --check   # тесты + сборка
+```
+
+Результат — `dist/psb_legal_assistant.zip` (44 КБ), 9 файлов строго в корне:
+
+| Файл | Откуда |
+| --- | --- |
+| `solution.py` | точка входа, импорты переписаны с `llmguard.*` на плоские |
+| `evidence.py`, `prompt_builder.py`, `validator.py`, `client.py`, `csvio.py` | модули ML2 |
+| `system_prompt.py` | промпт из `prompts/system_prompt.md`, зашитый в константу |
+| `retrieval_runtime.py` | `ML1/retrieval_runtime.py` (индекс строится на старте из `knowledge-base.zip`) |
+| `requirements.txt` | пусто: сторонних зависимостей нет |
+
+Сверка с регламентом:
+
+| Требование | Как выполнено |
+| --- | --- |
+| `solution.py` в корне, читает `DATA_DIR` | да, `DATA_DIR` → `questions.csv` + `knowledge-base.zip` |
+| `submission.csv` в рабочем каталоге, `id,answer`, UTF-8 | да, `QUOTE_ALL`, все ID в исходном порядке, пустых нет |
+| Один непустой ответ на ID, без повторов и лишних колонок | да; при провале модели — `fallback_refusal()` |
+| ≤ 10 000 символов на ответ | у нас ≤ ~1200 |
+| Модель и параметры из окружения | `LLM_MODEL`/`OPENAI_MODEL`/`GEN_MODEL`, `TEMPERATURE`, `MAX_TOKENS`, `TOP_K`, `MAX_WORKERS` |
+| Ключи не в материалах | `.env` в `.gitignore` и не попадает в архив (проверяется при сборке) |
+| Индекс строится на старте | `Retriever.from_data_dir()` по `knowledge-base.zip`, ~16–20 с на 21 документ |
+| 20 минут на прогон | 18 вопросов ≈ 45 с при `MAX_WORKERS=4`; запас более чем достаточный |
+
 ## Структура доказательства
 
 Из `RetrievedChunk` берутся `chunk_id`, `text`, `source_reference` и часть `metadata`
