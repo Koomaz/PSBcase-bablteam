@@ -23,7 +23,7 @@ from llmguard.client import LLMError, make_client
 from llmguard.csvio import find_questions_file, read_questions, write_submission
 from llmguard.evidence import build_evidence, parse_question, premise_warnings, summarize_diagnostics
 from llmguard.prompt_builder import build_messages, build_repair_message, load_system_prompt
-from llmguard.validator import fallback_refusal, validate
+from llmguard.validator import ensure_premise_ack, fallback_refusal, validate
 
 
 def load_dotenv(path: str | Path | None = None) -> None:
@@ -88,7 +88,7 @@ class LegalAssistant:
         max_evidence: int = 6,
         max_words: int = 180,
         max_attempts: int = 2,
-        max_tokens: int = 420,
+        max_tokens: int = 700,
         system_prompt: str | None = None,
         trace_path: str | Path | None = None,
     ) -> None:
@@ -124,6 +124,13 @@ class LegalAssistant:
         chunks, diagnostics = self.retrieve(question, history)
         items = build_evidence(chunks, max_items=self.max_evidence)
         warnings = premise_warnings(question, items)
+        # Автоматическую преамбулу ставим только по числам: у названий есть падежи,
+        # и ложное «посылка не подтверждается» хуже, чем отсутствие фразы.
+        conflicts = [
+            w.split("«")[1].split("»")[0]
+            for w in warnings
+            if w.startswith("число") and "«" in w and "»" in w
+        ]
         diag_note = summarize_diagnostics(diagnostics)
 
         messages = build_messages(
@@ -135,22 +142,34 @@ class LegalAssistant:
         )
 
         attempts = 0
-        result = validate("", items, self.max_words)
+        best = None
+        result = validate("", items, self.max_words, question=question, premise_conflicts=conflicts)
         for attempt in range(self.max_attempts):
             attempts = attempt + 1
+            budget = self.max_tokens if attempt == 0 else self.max_tokens * 2
             try:
-                raw = self.llm.complete(messages, temperature=0.0, max_tokens=self.max_tokens)
+                raw = self.llm.complete(messages, temperature=0.0, max_tokens=budget)
+                if getattr(self.llm, "last_finish_reason", None) == "length":
+                    # упёрлись в лимит — один раз пробуем с удвоенным бюджетом
+                    raw = self.llm.complete(messages, temperature=0.0, max_tokens=budget * 2)
             except LLMError as exc:
-                result = validate("", items, self.max_words)
+                result = validate("", items, self.max_words, question=question, premise_conflicts=conflicts)
                 result.issues.append(f"сбой вызова модели: {exc}")
                 break
 
-            result = validate(raw, items, self.max_words)
+            result = validate(raw, items, self.max_words, question=question, premise_conflicts=conflicts)
+            if result.citations and not result.is_refusal:
+                if best is None or len(result.citations) >= len(best.citations):
+                    best = result
             if result.ok:
                 break
 
             messages.append({"role": "assistant", "content": raw})
             messages.append(build_repair_message(result.issues))
+
+        if not result.ok and best is not None and not result.citations:
+            # второй проход оказался хуже первого (например, свалился в отказ)
+            result = best
 
         if result.ok:
             text = result.cleaned
@@ -158,6 +177,8 @@ class LegalAssistant:
             text = result.cleaned  # частично годный ответ лучше заглушки
         else:
             text = fallback_refusal(items)
+
+        text = ensure_premise_ack(text, conflicts, self.max_words)
 
         answer = Answer(
             qid=str(qid),

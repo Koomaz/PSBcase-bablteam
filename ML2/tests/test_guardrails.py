@@ -158,6 +158,19 @@ class TestValidator(unittest.TestCase):
         result = validate("Как правило, плата 450 000 рублей [E1].", self.items)
         self.assertTrue(any("как правило" in issue for issue in result.issues))
 
+    def test_truncated_answer_flagged(self):
+        result = validate("Плата 450 000 рублей, см. редакцию регламента от 10 [E1]", self.items)
+        self.assertTrue(any("обрывается" in issue for issue in result.issues), result.issues)
+
+    def test_false_premise_is_not_a_refusal(self):
+        answer = (
+            "Указанная в вопросе сумма в договоре не закреплена: плата 450 000 рублей [E1]. "
+            "Сведений об изменении размера платы в документах нет."
+        )
+        result = validate(answer, self.items)
+        self.assertFalse(result.is_refusal, "разбор ложной посылки не должен считаться отказом")
+        self.assertFalse(any("отказ" in issue for issue in result.issues), result.issues)
+
     def test_clean_collapses_newlines(self):
         self.assertEqual(clean_text("а\n\nб   в"), "а б в")
 

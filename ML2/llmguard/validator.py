@@ -26,6 +26,13 @@ FORBIDDEN_PATTERNS = (
 
 MARKDOWN_RE = re.compile(r"(\*\*|__|^#{1,6}\s|^\s*[-*+]\s|^\s*\d+[.)]\s|\|)", re.M)
 
+# Формулировки, которыми ответ фиксирует расхождение с посылкой вопроса.
+DISCREPANCY_MARKERS = (
+    "не подтвержда", "не соответству", "не закрепл", "не встреча", "не совпада",
+    "не указан", "не назван", "отличается", "неверн", "ошибоч", "в действительности",
+    "фактически", "на самом деле", "а не ",
+)
+
 REFUSAL_TEMPLATE_HINT = (
     "укажи, каких именно документов или положений не хватает"
 )
@@ -72,11 +79,16 @@ def validate(
     max_words: int = 180,
     min_words: int = 5,
     check_numbers: bool = True,
+    question: str = "",
+    premise_conflicts: Sequence[str] = (),
 ) -> ValidationResult:
     cleaned = clean_text(answer)
     issues: list[str] = []
     valid_ids = {item["eid"] for item in items}
     valid_numbers = _numbers(" ".join(item.get("text", "") for item in items))
+    # Число из вопроса можно повторить, чтобы опровергнуть ложную посылку.
+    if question:
+        valid_numbers |= _numbers(question)
 
     raw_ids = [f"E{n}" for n in CITE_RE.findall(answer or "")]
     unknown = sorted({eid for eid in raw_ids if eid not in valid_ids})
@@ -92,12 +104,26 @@ def validate(
     words = len(WORD_RE.findall(cleaned))
     if not cleaned:
         issues.append("пустой ответ")
-    elif words < min_words and not citations:
-        issues.append(f"ответ слишком короткий ({words} слов)")
-    elif words > max_words:
-        issues.append(f"ответ длиннее лимита: {words} слов при пределе {max_words}")
+    else:
+        without_cites = re.sub(r"(?:\s*\[[EЕ]\d+\])+\s*$", "", cleaned).strip()
+        if without_cites and without_cites[-1] not in ".!?)]»":
+            issues.append(
+                "ответ обрывается на середине: нет завершающей точки "
+                "(вероятно, упёрлись в лимит токенов)"
+            )
+        if words < min_words and not citations:
+            issues.append(f"ответ слишком короткий ({words} слов)")
+        elif words > max_words:
+            issues.append(f"ответ длиннее лимита: {words} слов при пределе {max_words}")
 
-    is_refusal = any(marker in cleaned.lower() for marker in REFUSAL_MARKERS)
+    # Отказ — это когда ПЕРВОЕ предложение говорит об отсутствии данных.
+    # «...в документах нет» в конце разбора ложной посылки отказом не является.
+    lowered = cleaned.lower()
+    first_sentence = re.split(r"(?<=[.!?])\s", lowered, maxsplit=1)[0]
+    marker_hit = any(marker in lowered for marker in REFUSAL_MARKERS)
+    is_refusal = any(marker in first_sentence for marker in REFUSAL_MARKERS) or (
+        marker_hit and not citations
+    )
     if items and is_refusal and not citations:
         issues.append(
             "похоже на необоснованный отказ: в доказательствах есть релевантные фрагменты, "
@@ -130,6 +156,29 @@ def validate(
         citations=citations,
         is_refusal=is_refusal,
     )
+
+
+def premise_ack_prefix(conflicts: Sequence[str]) -> str:
+    """Детерминированная преамбула для ложной посылки: модель её не всегда пишет сама."""
+    values = ", ".join(f"«{value}»" for value in conflicts if value)
+    if not values:
+        return ""
+    return (
+        f"Посылка в вопросе не подтверждается: {values} в предоставленных документах не встречается. "
+    )
+
+
+def ensure_premise_ack(text: str, conflicts: Sequence[str], max_words: int = 180) -> str:
+    if not conflicts or not text:
+        return text
+    if any(marker in text.lower() for marker in DISCREPANCY_MARKERS):
+        return text
+    prefix = premise_ack_prefix(conflicts)
+    if not prefix:
+        return text
+    if len(WORD_RE.findall(prefix + text)) > max_words:
+        return text
+    return (prefix + text).replace("  ", " ").strip()
 
 
 def fallback_refusal(items: Sequence[dict[str, Any]]) -> str:

@@ -17,6 +17,8 @@ class LLMError(RuntimeError):
 
 
 class ChatClient:
+    last_finish_reason: str | None = None
+
     def __init__(
         self,
         model: str,
@@ -79,6 +81,7 @@ class ChatClient:
             try:
                 with urllib.request.urlopen(request, timeout=self.timeout) as response:
                     data = json.loads(response.read().decode("utf-8"))
+                self.last_finish_reason = (data.get("choices") or [{}])[0].get("finish_reason")
                 return self._extract(data)
             except urllib.error.HTTPError as exc:  # 4xx/5xx
                 detail = exc.read().decode("utf-8", "replace")[:400]
@@ -118,6 +121,7 @@ class MockClient:
 
     configured = True
     model = "mock-extractive"
+    last_finish_reason = "stop"
 
     def complete(
         self,

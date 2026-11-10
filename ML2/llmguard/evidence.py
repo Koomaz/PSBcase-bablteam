@@ -123,6 +123,24 @@ def build_evidence(
     return items
 
 
+def _words(text: str) -> list[str]:
+    return re.findall(r"[а-яёa-z0-9]{3,}", text.lower())
+
+
+def _name_present(name: str, blob_words: list[str]) -> bool:
+    """«Северным Складом» ≈ «Северный Склад», но «Альфа-Трейдинг» ≠ «Альфа-Трейд».
+
+    Сверяем по основе (первые 5 символов) и требуем близкую длину, иначе
+    разные юрлица с общим корнем склеиваются.
+    """
+    for word in _words(name):
+        stem = word[:5]
+        if not any(candidate[:5] == stem and abs(len(candidate) - len(word)) <= 2
+                   for candidate in blob_words):
+            return False
+    return True
+
+
 def _numbers_in(text: str) -> set[str]:
     found: set[str] = set()
     for match in _NUM_RE.finditer(text):
@@ -154,8 +172,8 @@ def premise_warnings(question: str, items: Sequence[dict[str, Any]]) -> list[str
         return " ".join(parts)
 
     blob = " ".join(_flat(item) for item in items)
-    blob_low = blob.lower()
     blob_numbers = _numbers_in(blob)
+    blob_words = _words(blob)
 
     warnings: list[str] = []
 
@@ -175,7 +193,7 @@ def premise_warnings(question: str, items: Sequence[dict[str, Any]]) -> list[str
         core = re.sub(r"^(?:ооо|оао|зао|пао|ип)\s+", "", name.lower()).strip()
         if len(core) < 4:
             continue
-        if core in blob_low or name.lower() in blob_low:
+        if _name_present(core, blob_words) or _name_present(name, blob_words):
             continue
         warnings.append(f"название «{name}» из вопроса не встречается в доказательствах")
 
