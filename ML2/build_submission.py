@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import shutil
 import subprocess
 import sys
@@ -21,7 +22,11 @@ ROOT = Path(__file__).resolve().parent
 DIST = ROOT / "dist"
 ZIP_NAME = "psb_legal_assistant.zip"
 
-MODULES = ("evidence.py", "prompt_builder.py", "validator.py", "client.py", "csvio.py", "citations.py")
+MODULES = (
+    "evidence.py", "prompt_builder.py", "validator.py", "client.py",
+    "csvio.py", "citations.py", "verifier.py", "editions.py",
+    "textutil.py", "postprocess.py",
+)
 PROMPT = ROOT / "prompts" / "system_prompt.md"
 RETRIEVAL_RUNTIME = ROOT.parent / "ML1" / "retrieval_runtime.py"
 
@@ -42,9 +47,8 @@ def _prompt_module() -> str:
 
 
 def _rewrite_imports(source: str) -> str:
-    return source.replace("from ML2.llmguard.", "from ").replace("from llmguard.", "from ").replace(
-        "from .prompt_builder import", "from prompt_builder import",
-    )
+    source = source.replace("from ML2.llmguard.", "from ").replace("from llmguard.", "from ")
+    return re.sub(r"from \.(\w+) import", r"from \1 import", source)
 
 
 def build() -> Path:
