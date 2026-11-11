@@ -607,6 +607,7 @@ SYNONYMS = (
 
 # Map phrases that describe an operation to its terminology in source documents.
 INTENT_EXPANSIONS = (
+    (r"\bпоручитель\w*\b", r"\b(?:регламент\w*|согласован\w*|одобрен\w*)\b", "поручителем поручитель"),
     (r"\b(?:до|перед)\s+(?:получен\w*|поставк\w*|передач\w*|отгрузк\w*)\b",
      r"\b(?:деньг\w*|плат\w*|оплат\w*|перечисл\w*|расчет\w*|рассчит\w*)\b", "предоплата"),
     (r"\b(?:упаков\w*|упаковы\w*|упаку\w*|тар[аеуы])\b",
@@ -1342,6 +1343,10 @@ LEGAL_SCOPE = re.compile(
 )
 CLAUSE_LINK = re.compile(r"(?<!\w)(?:п\.|пункт\w*)\s*(\d+(?:\.\d+)+)(?![\d.])", re.I)
 DEFINITION = re.compile(r"\bдатой\s+([а-яё]+)\s+считается\b", re.I)
+QUESTION_BREAK = re.compile(
+    r";\s*|\?\s+(?=\S)|(?:,\s*(?:а\s+)?|\s+и\s+(?:от\s+|на\s+|в\s+|с\s+)?)"
+    r"(?=(?:кто|что|где|когда|как|како\w+|каку\w+|сколько|до какого)\b)", re.I,
+)
 
 
 def resolve_kb_source(directory: str | Path) -> Path:
@@ -1472,7 +1477,7 @@ class Retriever:
         return {i for i, chunk in enumerate(self._index.chunks)
                 if all(match(key, value, chunk.metadata.get(key)) for key, value in filters.items())}
 
-    def _search(self, query, top_k, history, filters, *, apply_reranker, debug):
+    def _search(self, query, top_k, history, filters, *, apply_reranker, debug, subquery=False):
         if not isinstance(query, str):
             raise TypeError("query must be a string")
         if not isinstance(top_k, int) or top_k < 0:
@@ -1501,11 +1506,11 @@ class Retriever:
                 warnings.append("document_identifier_not_found")
             bm25 = index.bm25.search(q.terms, eligible)
             local = index.local.search(q.latest, eligible)
-            if index.dense is None:
+            if not subquery and index.dense is None:
                 warnings.append("dense_index_unavailable")
-            elif index.manifest["embedding_model"] != self._settings.embedding_model:
+            elif not subquery and index.manifest["embedding_model"] != self._settings.embedding_model:
                 warnings.append("embedding_model_mismatch")
-            else:
+            elif not subquery:
                 try:
                     dense = dense_search(index.dense, self._api.embed([q.contextual])[0], eligible)
                     mode = "bge_dense"
@@ -1649,6 +1654,15 @@ class Retriever:
                         metadata["evidence_role"] = "comparison_only"
                 final.append(result)
 
+        parts = []
+        if not subquery and top_k >= 3 and final and not (
+            directive or q.refs or q.comparative or q.specification_period or scope["ambiguous"]
+        ):
+            parts = [part.strip(" ,;?") for part in QUESTION_BREAK.split(q.latest)]
+            if 2 <= len(parts) <= 3 and all(len(part.split()) >= 2 for part in parts):
+                final = self._merge_question_parts(q, parts, scope, final, top_k, filters)
+            else:
+                parts = []
         if top_k:
             warnings.extend(retrieval_warnings(q, final, index.manifest["issues"]))
         if q.period and "exact_reference_not_found" in warnings:
@@ -1657,6 +1671,7 @@ class Retriever:
             "query": query, "normalized_query": normalize(q.latest),
             "contextual_query": q.contextual, "event_period": list(q.period) if q.period else None,
             "user_context": q.user_context,
+            "question_parts": parts,
             "specification_period": list(q.specification_period) if q.specification_period else None,
             "resolved_scope": scope,
             "mode": mode, "reranker_mode": self._settings.reranker_mode if reranked else None, "warnings": warnings,
@@ -1677,6 +1692,44 @@ class Retriever:
                 ]
             diagnostics["parse_issues"] = copy.deepcopy(index.manifest["issues"])
         return final, diagnostics
+
+    def _merge_question_parts(self, q, parts, resolved, original, top_k, filters):
+        # Reuse resolved identifiers without repeating all the words from the other subquestions.
+        scope = " ".join(sorted(q.numbers | q.aliases | q.codes))
+        if q.regulations:
+            scope += " регламент согласования договоров"
+        dated_parts = sum(bool(analyze_query(part, None, self._alias_numbers).period) for part in parts)
+        if q.period and dated_parts <= 1:
+            scope += " " + " ".join(dict.fromkeys(q.period))
+        context = [{"role": "user", "content": scope.strip()}] if scope.strip() else None
+        doc = self._documents.get(resolved["doc_id"], {})
+        rent = "договор аренды" in normalize(doc.get("doc_title", ""))
+        queries = []
+        for part in parts:
+            if re.search(r"\b(?:платим|платить|платит|оплач\w*)\b", part, re.I):
+                part += " " + ("арендная плата" if rent else "оплата товара" if doc.get("doc_type") == "contract" else "оплата")
+            if q.regulations and not re.search(r"\bрегламент\w*", part, re.I):
+                part += " согласование договора по регламенту"
+            queries.append(part)
+        rankings = [
+            self._search(part, 3, context, filters, apply_reranker=False, debug=False, subquery=True)[0]
+            for part in queries
+        ]
+        if not all(rankings):
+            return original
+        selected = {}
+        for rank in range(3):
+            if rank == 1:
+                for hit in original:
+                    if hit.score_details.get("selection_reason"):
+                        selected.setdefault(hit.chunk_id, hit)
+            for hits in rankings:
+                if rank < len(hits):
+                    hit = hits[rank]
+                    selected.setdefault(hit.chunk_id, hit)
+        for hit in original:
+            selected.setdefault(hit.chunk_id, hit)
+        return list(selected.values())[:top_k]
 
     def _related(self, i: int) -> list[int]:
         meta = self._index.chunks[i].metadata

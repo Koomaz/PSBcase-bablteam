@@ -217,6 +217,22 @@ class RetrievalChecks(unittest.TestCase):
         self.assertTrue(any(hit.metadata["clause"] == "6.1" for hit in hits))
         self.assertTrue(any(hit.metadata["clause"] == "3.3" for hit in hits))
 
+    def test_compound_questions_cover_each_part(self):
+        cases = (
+            ("В А-08/2024 какую сумму платим за склад, что отдельно за счётчики и с какой частотой арендодатель вправе повысить ставку?",
+             {"3.1", "3.3", "3.4"}, "А-08/2024"),
+            ("По договору ПТ-05/2023 сколько дней ждём технику от заявки; когда техника переходит в собственность и в какой срок платим?",
+             {"3.1", "3.3", "4.1"}, "ПТ-05/2023"),
+            ("По действующему регламенту кто согласует договор по типовой форме без правок; а кто участвует, если Меридиан даёт поручительство?",
+             {"4.1", "2.5"}, None),
+        )
+        for query, clauses, doc_number in cases:
+            with self.subTest(query=query):
+                hits, diagnostics = self.searcher.search_with_diagnostics(query, top_k=5)
+                self.assertGreaterEqual(len(diagnostics["question_parts"]), 2)
+                found = {hit.metadata["clause"] for hit in hits if hit.metadata["doc_number"] == doc_number}
+                self.assertTrue(clauses <= found, found)
+
     def test_model_clients_index_and_fallback(self):
         requests = []
 

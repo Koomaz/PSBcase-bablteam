@@ -123,6 +123,18 @@ class TestEvidence(unittest.TestCase):
 
 
 class TestValidator(unittest.TestCase):
+    def test_cited_quantity_keeps_parenthetical_number_and_unit(self):
+        items = [{"eid": "E1", "text": "Гарантийный срок составляет 24 (двадцать четыре) месяца."},
+                 {"eid": "E2", "text": "Уведомление направляется в течение 5 (пяти) рабочих дней."}]
+        for draft in ("Гарантийный срок составляет 24 месяца [E1].",
+                      "Уведомление направляется в течение 5 рабочих дней [E2]."):
+            self.assertTrue(validate(draft, items, 150).ok, draft)
+        for draft in ("Гарантийный срок составляет 24 рабочих дня [E1].",
+                      "Гарантийный срок составляет 99 месяцев [E1].",
+                      "Уведомление направляется в течение 5 календарных дней [E2].",
+                      "Уведомление направляется в течение 5 рабочих дней [E1]."):
+            self.assertTrue(validate(draft, items, 150).critical, draft)
+
     def setUp(self):
         self.items = build_evidence(
             [chunk("c1", "3.1. Арендная плата составляет 450 000 рублей в месяц.")]

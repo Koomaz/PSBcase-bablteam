@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from decimal import Decimal
 from typing import Any, Sequence
 
 CITE_RE = re.compile(r"\[\s*(?:E|Е)\s*(\d{1,2})\s*\]")
@@ -65,6 +66,31 @@ UNIT_NUMBER = re.compile(
     r"\d[\d\s\u00a0]*(?:[.,]\d+)?\s*(?:\w+\s+){0,2}(?:%|₽|руб\w*|процент\w*|дн\w*|мес\w*|год\w*|лет|недел\w*|час\w*)",
     re.I,
 )
+QUANTITY_RE = re.compile(
+    r"(?<![\w.,])(?P<value>\d{1,3}(?:[ \u00a0\u202f]\d{3})+(?:[.,]\d+)?|\d+(?:[.,]\d+)?)"
+    r"\s*(?:\([а-яё\s-]+\)\s*)?(?:(?P<scale>млрд|млн|тыс)\.?\s+)?"
+    r"(?:(?P<qualifier>рабоч\w*|календарн\w*)\s+)?"
+    r"(?P<unit>%|₽|руб(?:л\w*)?|процент\w*|дн(?:я|ей|и)?|день|"
+    r"месяц\w*|мес|год\w*|лет|недел\w*|час\w*)(?!\w)", re.I,
+)
+UNIT_PREFIXES = (
+    (("%", "процент"), "percent"), (("₽", "руб"), "rub"),
+    (("дн", "день"), "day"), (("мес",), "month"), (("год", "лет"), "year"),
+    (("недел",), "week"), (("час",), "hour"),
+)
+
+
+def _quantities(text: str) -> list[tuple[Decimal, str, str, str]]:
+    found = []
+    for match in QUANTITY_RE.finditer(DATE_RE.sub(" ", text)):
+        value = Decimal(re.sub(r"\s+", "", match["value"]).replace(",", "."))
+        if match["scale"]:
+            value *= MULTIPLIERS[match["scale"].lower()]
+        unit = next(label for prefixes, label in UNIT_PREFIXES if match["unit"].lower().startswith(prefixes))
+        qualifier = (match["qualifier"] or "").lower()
+        kind = "working" if qualifier.startswith("рабоч") else "calendar" if qualifier else ""
+        found.append((value, unit, kind, match[0]))
+    return found
 
 
 def _normalize_number(raw: str) -> str:
@@ -89,6 +115,8 @@ def _numbers(text: str) -> set[str]:
             out.add(digits)
     for match in UNIT_NUMBER.finditer(text):
         out.add(_normalize_number(match.group(0)))
+    for value, _, _, _ in _quantities(text):
+        out.add(_normalize_number(format(value.normalize(), "f")))
     return out
 
 
@@ -112,6 +140,7 @@ def _attribution_problems(cleaned: str, items: Sequence[dict[str, Any]], questio
     """
     texts = {item["eid"]: item.get("text", "") for item in items}
     question_numbers = _numbers(question or "")
+    question_quantities = {(value, unit, kind) for value, unit, kind, _ in _quantities(question or "")}
     problems: list[str] = []
     seen: set[str] = set()
 
@@ -124,8 +153,11 @@ def _attribution_problems(cleaned: str, items: Sequence[dict[str, Any]], questio
                     problems.append(f"число {number} не подтверждено источниками в предложении без ссылки")
             continue
         cited_numbers: set[str] = set()
+        cited_quantities = []
         for eid in cites:
-            cited_numbers |= _numbers(texts.get(eid, ""))
+            source = texts.get(eid, "")
+            cited_numbers |= _numbers(source)
+            cited_quantities.extend(_quantities(source))
         refuting = any(marker in sentence.lower() for marker in DISCREPANCY_MARKERS)
         for number in sorted(_numbers(sentence) - cited_numbers):
             # Годы редакций и даты — не количественные утверждения: 2024/2025
@@ -141,6 +173,22 @@ def _attribution_problems(cleaned: str, items: Sequence[dict[str, Any]], questio
             problems.append(
                 f"число {number} не подтверждено цитируемым источником {', '.join(cites)} (возможная выдумка)"
             )
+        for value, unit, kind, written in _quantities(sentence):
+            numeric_key = _normalize_number(format(value.normalize(), "f"))
+            if refuting and (value, unit, kind) in question_quantities:
+                continue
+            same_number = [
+                (candidate, source_unit, source_kind)
+                for candidate, source_unit, source_kind, _ in cited_quantities
+                if _normalize_number(format(candidate.normalize(), "f")) == numeric_key
+            ]
+            if same_number and not any(
+                candidate == value and source_unit == unit and (not kind or kind == source_kind)
+                for candidate, source_unit, source_kind in same_number
+            ):
+                message = f"величина «{written}» расходится с единицей или значением в источнике {', '.join(cites)}"
+                if message not in problems:
+                    problems.append(message)
     return problems
 
 
