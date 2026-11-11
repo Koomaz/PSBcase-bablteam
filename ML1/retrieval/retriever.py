@@ -7,7 +7,7 @@ from collections import defaultdict
 from pathlib import Path
 
 from .artifacts import IndexData, build_indexes, load_indexes
-from .bm25_index import lexical_terms
+from .bm25_index import lexical_terms, stem, words
 from .chunker import DIRECTIVE
 from .config import CANDIDATE_DEPTH, Settings
 from .diagnostics import retrieval_warnings
@@ -37,6 +37,8 @@ LEGAL_SCOPE = re.compile(
     r"\b(?:договор|закон|норматив|регламент|трудов|работник|налог|ндс|санкци|право|персональн|"
     r"соглашен|судеб|аренд|поставк|неустойк|архив|претензи|взыскан|обязательств)\w*\b", re.I
 )
+CLAUSE_LINK = re.compile(r"(?<!\w)(?:п\.|пункт\w*)\s*(\d+(?:\.\d+)+)(?![\d.])", re.I)
+DEFINITION = re.compile(r"\bдатой\s+([а-яё]+)\s+считается\b", re.I)
 
 
 def resolve_kb_source(directory: str | Path) -> Path:
@@ -75,12 +77,23 @@ class Retriever:
         self._core_terms = [set(lexical_terms(chunk.text)) for chunk in indexes.chunks]
         self._amendments = defaultdict(list)
         self._provisions = defaultdict(list)
+        self._documents = {meta["doc_id"]: meta for meta in indexes.documents}
+        self._rows_by_doc = defaultdict(list)
+        self._sections = defaultdict(list)
+        self._definitions = defaultdict(list)
         for i, chunk in enumerate(indexes.chunks):
             meta = chunk.metadata
+            self._rows_by_doc[chunk.doc_id].append(i)
+            if meta["clause"] and meta["section"]:
+                self._sections[chunk.doc_id, meta["section"]].append(i)
+            for term in DEFINITION.findall(chunk.text):
+                self._definitions[chunk.doc_id, normalize(term)].append(i)
             if meta["parent_doc_id"] and meta["amends_clause"]:
                 self._amendments[meta["parent_doc_id"], meta["amends_clause"]].append(i)
-            if meta["doc_type"] == "contract" and meta["clause"]:
+            if meta["doc_type"] in {"contract", "regulation"} and meta["clause"]:
                 self._provisions[chunk.doc_id, meta["clause"]].append(i)
+        for rows in self._rows_by_doc.values():
+            rows.sort(key=lambda i: indexes.chunks[i].metadata["char_start"])
 
     @classmethod
     def from_artifacts(cls, directory: str | Path = "artifacts", *, settings: Settings | None = None) -> Retriever:
@@ -100,6 +113,22 @@ class Retriever:
     @property
     def manifest(self) -> dict:
         return copy.deepcopy(self._index.manifest)
+
+    def document_registry(self) -> list[dict]:
+        """Return source metadata and available locators without chunk text."""
+        registry = []
+        for doc_id, metadata in self._documents.items():
+            rows = self._rows_by_doc[doc_id]
+            clauses = dict.fromkeys(self._index.chunks[i].metadata["clause"] for i in rows)
+            registry.append({
+                **copy.deepcopy(metadata), "clauses": [clause for clause in clauses if clause],
+                "chunk_count": len(rows),
+            })
+        return registry
+
+    def document_chunks(self, doc_id: str) -> list[RetrievedChunk]:
+        """Return the indexed source in original order, with no query or network call."""
+        return [self._result(i, None, 0.0, {}) for i in self._rows_by_doc.get(doc_id, ())]
 
     def search(self, query: str, top_k: int = 5, history: list | None = None,
                filters: dict | None = None) -> list[RetrievedChunk]:
@@ -151,14 +180,20 @@ class Retriever:
         warnings = []
         mode = "local_tfidf"
         eligible = self._eligible(filters)
+        scope = self._resolve_scope(q, eligible)
         final = []
         directive = bool(DIRECTIVE.search(q.latest))
         has_legal_scope = bool(q.refs or q.numbers or q.aliases or q.codes or LEGAL_SCOPE.search(q.latest))
+        unresolved_party = scope["conflicting_identifiers"] or (
+            scope["ambiguous"] and not (q.numbers or q.aliases or q.codes or q.regulations)
+        )
         if directive:
             warnings.append("query_prompt_directive_suspected")
+        if scope["ambiguous"]:
+            warnings.append("ambiguous_document_scope")
         if not q.latest.strip():
             warnings.append("empty_query")
-        elif top_k > 0 and eligible and (not directive or has_legal_scope):
+        elif top_k > 0 and eligible and not unresolved_party and (not directive or has_legal_scope):
             if q.numbers - self._known_numbers:
                 warnings.append("document_identifier_not_found")
             bm25 = index.bm25.search(q.terms, eligible)
@@ -180,6 +215,10 @@ class Retriever:
             fusion = reciprocal_fusion([(best_bm25, lexical_weight), (best_vector, 1 - lexical_weight)])
             anchored = bool(q.numbers or q.aliases or q.codes)
             matching = {i for i in eligible if document_match(index.chunks[i].metadata, q)}
+            if scope["doc_id"] and q.numbers and not q.codes:
+                doc_id = scope["doc_id"]
+                matching = {i for i in matching if index.chunks[i].doc_id == doc_id
+                            or index.chunks[i].metadata["parent_doc_id"] == doc_id}
             addenda = {i for i in eligible if index.chunks[i].metadata["doc_type"] == "addendum"}
             exact = {
                 i for i in (matching if anchored and not q.regulations else eligible)
@@ -272,10 +311,13 @@ class Retriever:
             selected = []
             seen = defaultdict(int)
             best_score = adjusted[ranking[0]] if ranking else 0.0
-            for i in self._prioritize_related(ranking, top_k):
+            ranking, supplemental = self._expand_ranked(ranking, q, eligible, adjusted, coverage, top_k)
+            for i in ranking:
                 if len(selected) == top_k:
                     break
-                if adjusted[i] < best_score * 0.23 and not any(i in self._related(j) for j in selected):
+                if adjusted[i] < best_score * 0.23 and i not in supplemental and not any(
+                    i in self._related(j) for j in selected
+                ):
                     continue
                 row = index.chunks[i]
                 meta = row.metadata
@@ -291,12 +333,18 @@ class Retriever:
                     continue
                 selected.append(i)
                 seen[key] += 1
-                final.append(self._result(i, q, adjusted[i], {
+                result = self._result(i, q, adjusted[i], {
                     "bm25_score": bm25.get(i), "vector_score": (dense or local).get(i),
                     "local_vector_score": local.get(i), "fusion_score": fusion.get(i, 0.0),
                     "rerank_score": reranked.get(i), "exact_match": i in exact,
                     "document_match": i in matching, "term_evidence": coverage[i],
-                }))
+                })
+                if i in supplemental:
+                    result.score_details["selection_reason"] = supplemental[i]
+                if supplemental.get(i) == "comparison_edition":
+                    for metadata in (result.metadata, result.citation_payload):
+                        metadata["evidence_role"] = "comparison_only"
+                final.append(result)
 
         if top_k:
             warnings.extend(retrieval_warnings(q, final, index.manifest["issues"]))
@@ -307,9 +355,7 @@ class Retriever:
             "contextual_query": q.contextual, "event_period": list(q.period) if q.period else None,
             "user_context": q.user_context,
             "specification_period": list(q.specification_period) if q.specification_period else None,
-            "resolved_scope": {
-                "document_numbers": sorted(q.numbers), "counterparties": sorted(q.aliases), "law_codes": sorted(q.codes),
-            },
+            "resolved_scope": scope,
             "mode": mode, "reranker_mode": self._settings.reranker_mode if reranked else None, "warnings": warnings,
             "confidence": "low" if not final or any(
                 name in warnings for name in ("historical_or_date_coverage_unverified",
@@ -334,6 +380,95 @@ class Retriever:
         if meta["parent_doc_id"] and meta["amends_clause"]:
             return self._provisions.get((meta["parent_doc_id"], meta["amends_clause"]), [])
         return self._amendments.get((meta["doc_id"], meta["clause"]), [])
+
+    def _resolve_scope(self, q, eligible: set[int]) -> dict:
+        doc_ids = {self._index.chunks[i].doc_id for i in eligible}
+        available = [meta for doc_id, meta in self._documents.items() if doc_id in doc_ids]
+        candidates = [meta for meta in available if document_match(meta, q)]
+        ambiguous = False
+        conflicting_identifiers = False
+        if q.numbers and not q.codes:
+            candidates = [meta for meta in candidates if meta["doc_number"]
+                          and canonical_number(meta["doc_number"]) in q.numbers]
+            if q.aliases and candidates:
+                compatible = [meta for meta in candidates if q.aliases.intersection(
+                    normalize(name) for name in meta["counterparties"]
+                )]
+                conflicting_identifiers = ambiguous = not compatible
+                candidates = compatible or candidates
+        elif q.aliases:
+            primary = [meta for meta in candidates if meta["doc_type"] == "contract"]
+            candidates = primary or candidates
+        elif not candidates and "article" not in q.refs and re.search(
+            r"\b(?:регламент|согласован|одобрен)\w*\b", normalize(q.contextual)
+        ):
+            candidates = [meta for meta in available if meta["doc_type"] == "regulation"]
+            ambiguous = len({meta["edition_group"] for meta in candidates}) > 1
+        elif not (q.numbers or q.codes):
+            query_roots = {stem(word) for word in words(q.contextual)}
+            partial = {alias for alias in self._alias_numbers
+                       if stem(words(alias)[0]) in query_roots}
+            if len(partial) > 1:
+                candidates = [meta for meta in available if meta["doc_type"] == "contract"
+                              and partial.intersection(normalize(name) for name in meta["counterparties"])]
+                ambiguous = len(candidates) > 1
+        if articles := q.refs.get("article"):
+            candidates = [meta for meta in candidates if meta.get("article") in articles]
+        applicable = [meta for meta in candidates if temporal_status(meta, q) in {"applicable", "undated", "snapshot"}]
+        if len(applicable) > 1:
+            ambiguous = True
+        primary = applicable[0] if len(applicable) == 1 and not ambiguous else None
+        comparison = [
+            meta["doc_id"] for meta in candidates if primary and primary["edition_group"]
+            and meta["edition_group"] == primary["edition_group"] and meta["doc_id"] != primary["doc_id"]
+        ]
+        return {
+            "document_numbers": sorted(q.numbers), "counterparties": sorted(q.aliases), "law_codes": sorted(q.codes),
+            "doc_id": primary["doc_id"] if primary else None, "doc_number": primary["doc_number"] if primary else None,
+            "event_date": q.period[0] if q.period and q.period[0] == q.period[1] else None,
+            "candidate_doc_ids": [meta["doc_id"] for meta in candidates],
+            "applicable_doc_ids": [meta["doc_id"] for meta in applicable],
+            "comparison_doc_ids": comparison, "ambiguous": ambiguous,
+            "conflicting_identifiers": conflicting_identifiers,
+        }
+
+    def _expand_ranked(self, ranking, q, eligible, scores, coverage, top_k):
+        ranking = self._prioritize_related(ranking, top_k)
+        if top_k < 3 or not ranking:
+            return ranking, {}
+        chunks = self._index.chunks
+        first = ranking[0]
+        anchor = chunks[first]
+        metadata = anchor.metadata
+        additions = {}
+
+        if metadata["doc_type"] in {"contract", "regulation"}:
+            for clause in CLAUSE_LINK.findall(anchor.text):
+                for i in self._provisions.get((anchor.doc_id, clause), ()):
+                    additions.setdefault(i, "cross_reference")
+            for term in re.findall(r"\b(?:с|от|до)\s+дат[ыа]\s+([а-яё]+)", anchor.text, re.I):
+                for i in self._definitions.get((anchor.doc_id, normalize(term)), ()):
+                    additions.setdefault(i, "term_definition")
+        if q.period and not q.edition_period and not q.comparative and metadata["edition_group"] and metadata["clause"]:
+            if temporal_status(metadata, q) == "applicable" and metadata["version_status"] != "current":
+                for doc in self._documents.values():
+                    if doc["edition_group"] == metadata["edition_group"] and doc["version_status"] == "current":
+                        for i in self._provisions.get((doc["doc_id"], metadata["clause"]), ()):
+                            additions.setdefault(i, "comparison_edition")
+        if not q.refs and len(ranking) > 1 and metadata["doc_type"] == "contract":
+            second = chunks[ranking[1]]
+            if second.doc_id == anchor.doc_id and second.metadata["section"] == metadata["section"]:
+                for i in self._sections.get((anchor.doc_id, metadata["section"]), ()):
+                    if i not in ranking[:2]:
+                        additions.setdefault(i, "same_section")
+                        break
+        head = ranking[:2]
+        supplemental = {i: reason for i, reason in additions.items() if i in eligible and i not in head}
+        supplemental = dict(list(supplemental.items())[:2])
+        for i in supplemental:
+            scores.setdefault(i, scores[first] * 0.5)
+            coverage.setdefault(i, 0.0)
+        return head + list(supplemental) + [i for i in ranking[2:] if i not in supplemental], supplemental
 
     def _amendment_status(self, i: int, q) -> str | None:
         meta = self._index.chunks[i].metadata
@@ -406,8 +541,8 @@ class Retriever:
     def _source(self, i, q) -> tuple[dict, dict]:
         chunk = self._index.chunks[i]
         meta = copy.deepcopy(chunk.metadata)
-        meta["document_temporal_status"] = temporal_status(meta, q)
-        meta["amendment_status"] = self._amendment_status(i, q)
+        meta["document_temporal_status"] = temporal_status(meta, q) if q is not None else None
+        meta["amendment_status"] = self._amendment_status(i, q) if q is not None else None
         meta["temporal_status"] = meta["document_temporal_status"]
         if meta["amendment_status"] and meta["temporal_status"] not in {"outside_period", "superseded"}:
             meta["temporal_status"] = meta["amendment_status"]

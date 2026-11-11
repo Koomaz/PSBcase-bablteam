@@ -14,16 +14,15 @@ FILES = {
     "retrieval_runtime.py": ROOT / "ML1" / "retrieval_runtime.py",
     "requirements.txt": ROOT / "requirements.txt",
     "ml2_solution.py": ML2 / "solution.py",
-    **{f"{module}.py": ML2 / "llmguard" / f"{module}.py"
-       for module in ("client", "csvio", "evidence", "prompt_builder", "validator", "citations")},
 }
 MAX_ZIP_BYTES = 128_000_000
 
 
 def build(target: Path) -> None:
     ml2_builder = runpy.run_path(str(ML2 / "build_submission.py"))
-    files = {name: path.read_bytes() for name, path in FILES.items()}
-    for name, path in FILES.items():
+    sources = {**FILES, **{name: ML2 / "llmguard" / name for name in ml2_builder["MODULES"]}}
+    files = {name: path.read_bytes() for name, path in sources.items()}
+    for name, path in sources.items():
         if path == ML2 / "solution.py" or path.parent == ML2 / "llmguard":
             files[name] = ml2_builder["_rewrite_imports"](files[name].decode("utf-8")).encode("utf-8")
     files["system_prompt.py"] = ml2_builder["_prompt_module"]().encode("utf-8")

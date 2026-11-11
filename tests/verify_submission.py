@@ -24,6 +24,7 @@ EXPECTED_FILES = {
     "solution.py", "psb_backend.py", "retrieval_runtime.py", "requirements.txt",
     "ml2_solution.py", "client.py", "csvio.py", "evidence.py",
     "prompt_builder.py", "validator.py", "system_prompt.py", "citations.py",
+    "editions.py", "postprocess.py", "textutil.py", "verifier.py",
 }
 FAKE_ANSWER = (
     'Посылка не подтверждается, "проверка" требует сверить условия с найденным положением '

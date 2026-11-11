@@ -79,6 +79,8 @@ def augment_editions(
 ) -> tuple[list[Any], str]:
     """Возвращает (chunks, note). При отключённом/неудачном поиске — исходный список."""
     original = list(chunks or [])
+    if any(_meta(chunk).get("evidence_role") == "comparison_only" for chunk in original):
+        return original, ""
     if not original or not question_is_dated(question):
         return original, ""
     if not hasattr(retriever, "search"):

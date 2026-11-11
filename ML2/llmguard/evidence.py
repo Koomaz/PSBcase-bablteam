@@ -79,7 +79,7 @@ def _meta_summary(meta: dict[str, Any]) -> dict[str, Any]:
         "validity_period", "version_status", "temporal_status", "article",
         "section", "clause", "part", "subclause", "appendix", "amends_clause",
         "counterparties", "law_code", "parent_doc_number", "document_temporal_status",
-        "amendment_status", "amendment_application_date", "amendment_application_relation",
+        "amendment_status", "amendment_application_date", "amendment_application_relation", "evidence_role",
     )
     out = {k: meta.get(k) for k in keys if meta.get(k) not in (None, "", [], {})}
     return out

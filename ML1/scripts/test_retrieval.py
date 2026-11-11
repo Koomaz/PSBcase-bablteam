@@ -183,6 +183,40 @@ class RetrievalChecks(unittest.TestCase):
             self.assertEqual(citation["chunk_id"], neighbor["chunk_id"])
             self.assertEqual(citation["char_start"], neighbor["char_start"])
 
+    def test_document_registry_and_packets(self):
+        registry = self.searcher.document_registry()
+        self.assertEqual(sum(doc["chunk_count"] for doc in registry), self.searcher.manifest["chunk_count"])
+        self.assertEqual(len({doc["doc_id"] for doc in registry}), len(registry))
+        editions = [doc for doc in registry if doc["doc_type"] == "regulation"]
+        self.assertEqual({doc["edition_date"] for doc in editions}, {"2023-01-10", "2025-03-01"})
+        for doc in registry:
+            packet = self.searcher.document_chunks(doc["doc_id"])
+            self.assertEqual(len({chunk.chunk_id for chunk in packet}), doc["chunk_count"])
+            positions = [chunk.metadata["char_start"] for chunk in packet]
+            self.assertEqual(positions, sorted(positions))
+            self.assertTrue(all(chunk.metadata["doc_id"] == doc["doc_id"] and chunk.text for chunk in packet))
+        self.assertEqual(self.searcher.document_chunks("missing"), [])
+
+    def test_scope_and_comparison_edition(self):
+        hits, diagnostics = self.searcher.search_with_diagnostics(
+            "Нужно ли было одобрение генерального директора по п. 2.4 регламента в августе 2024 года?"
+        )
+        scope = diagnostics["resolved_scope"]
+        self.assertEqual(scope["applicable_doc_ids"], [hits[0].metadata["doc_id"]])
+        comparison = next(hit for hit in hits if hit.metadata.get("evidence_role") == "comparison_only")
+        self.assertEqual(scope["comparison_doc_ids"], [comparison.metadata["doc_id"]])
+        self.assertEqual(comparison.metadata["edition_date"], "2025-03-01")
+        self.assertEqual(comparison.metadata["temporal_status"], "outside_period")
+        hits, diagnostics = self.searcher.search_with_diagnostics("Какая гарантия по договору с Альфой?")
+        self.assertEqual(hits, [])
+        self.assertTrue(diagnostics["resolved_scope"]["ambiguous"])
+        self.assertEqual(len(diagnostics["resolved_scope"]["candidate_doc_ids"]), 2)
+
+    def test_retrieval_includes_term_definition(self):
+        hits = self.searcher.search("За сколько дней после поставки проверяется качество по П-17/2024?")
+        self.assertTrue(any(hit.metadata["clause"] == "6.1" for hit in hits))
+        self.assertTrue(any(hit.metadata["clause"] == "3.3" for hit in hits))
+
     def test_model_clients_index_and_fallback(self):
         requests = []
 
