@@ -56,6 +56,13 @@ export interface Fragment extends Source {
   text: string;
 }
 
+export interface DocumentInfo {
+  doc_id: string;
+  doc_title: string;
+  file_path?: string;
+  text: string;
+}
+
 export interface ChatResponse {
   kind: AnswerKind;
   answer: string;
@@ -93,11 +100,12 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   if (!response.ok) {
-    const detail = (body as { detail?: { code?: string; message?: string } })
-      ?.detail;
+    const raw = (body as { detail?: unknown })?.detail;
+    const detail = raw && typeof raw === "object" ? (raw as { code?: string; message?: string }) : {};
     throw new ApiError(
-      detail?.code ?? "internal",
-      detail?.message ?? "Не удалось обработать запрос."
+      detail.code ?? (response.status === 404 ? "not_found" : "internal"),
+      detail.message ??
+        (typeof raw === "string" ? raw : "Не удалось обработать запрос.")
     );
   }
   return body as T;
@@ -118,5 +126,9 @@ export const api = {
 
   source(chunkId: string): Promise<Fragment> {
     return request(`/api/sources/${encodeURIComponent(chunkId)}`);
+  },
+
+  document(docId: string): Promise<DocumentInfo> {
+    return request(`/api/documents/${encodeURIComponent(docId)}`);
   },
 };

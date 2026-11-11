@@ -24,6 +24,7 @@
   --accent-soft-hover: #c7d2fe;
   --on-accent: #ffffff;
   --bubble-user: #1e3a8a;
+  --bubble-user-text: #ffffff;
   --error-bg: #fef2f2;
   --error-line: #fecaca;
   --error-text: #b91c1c;
@@ -31,6 +32,7 @@
   --warn-bg: #fef3c7;
   --warn-text: #92400e;
   --quote-bg: #f8fafc;
+  --highlight: #fde68a;
   --shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
   --shadow-lift: 0 4px 10px rgba(15, 23, 42, 0.1);
 }
@@ -55,6 +57,7 @@
   --accent-soft-hover: #2a3a63;
   --on-accent: #0b1220;
   --bubble-user: #2c4390;
+  --bubble-user-text: #f0f4ff;
   --error-bg: #2a1618;
   --error-line: #5c2b2b;
   --error-text: #fca5a5;
@@ -62,6 +65,7 @@
   --warn-bg: #2c2414;
   --warn-text: #fcd34d;
   --quote-bg: #1a2436;
+  --highlight: #7c5e10;
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
   --shadow-lift: 0 4px 12px rgba(0, 0, 0, 0.4);
 }
@@ -351,7 +355,7 @@ body {
 .bubble-user {
   background: var(--bubble-user);
   border-color: var(--bubble-user);
-  color: var(--on-accent);
+  color: var(--bubble-user-text);
   border-bottom-right-radius: 4px;
 }
 
@@ -633,6 +637,85 @@ body {
 }
 
 .fragment-error { color: var(--error-text); }
+
+/* открытие полного документа */
+
+.doc-open {
+  margin-top: 14px;
+  width: 100%;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--text);
+  border-radius: 10px;
+  padding: 10px 14px;
+  font: inherit;
+  font-size: 0.88rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+
+.doc-open:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.doc-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  z-index: 40;
+}
+
+.doc-modal-card {
+  width: min(920px, 100%);
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  box-shadow: var(--shadow-lift);
+  overflow: hidden;
+}
+
+.doc-modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--line);
+}
+
+.doc-modal-head h2 {
+  margin: 0;
+  font-size: 0.98rem;
+}
+
+.doc-modal-body {
+  overflow-y: auto;
+  padding: 18px 22px 28px;
+}
+
+.doc-text {
+  white-space: pre-wrap;
+  line-height: 1.65;
+  font-size: 0.94rem;
+  color: var(--text);
+}
+
+.doc-highlight {
+  background: var(--highlight, #fde68a);
+  color: var(--text);
+  border-radius: 4px;
+  padding: 1px 2px;
+  box-shadow: 0 0 0 2px var(--highlight, #fde68a);
+}
 
 @media (max-width: 720px) {
   .dialogs { display: none; }

@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, type Fragment, type Source } from "../lib/api";
+import { FEATURES } from "../lib/features";
+import { DocumentModal } from "./DocumentModal";
 
 function formatReference(source: Source | Fragment): string {
   const parts: string[] = [];
@@ -49,6 +51,7 @@ export function SourcePanel({
 }) {
   const [fragment, setFragment] = useState<Fragment | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [showDocument, setShowDocument] = useState(false);
 
   useEffect(() => {
     if (!source) return;
@@ -99,8 +102,20 @@ export function SourcePanel({
           ) : (
             <div className="fragment-loader">Загрузка фрагмента…</div>
           )}
+          {FEATURES.documentViewer && (
+            <button
+              type="button"
+              className="doc-open"
+              onClick={() => setShowDocument(true)}
+            >
+              Открыть документ целиком
+            </button>
+          )}
         </div>
       </div>
+      {showDocument && (
+        <DocumentModal source={source} onClose={() => setShowDocument(false)} />
+      )}
     </aside>
   );
 }
