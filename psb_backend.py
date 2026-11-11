@@ -103,6 +103,8 @@ class Answer:
 
     def as_csv_text(self) -> str:
         result = self.answer
+        for index, source in enumerate(self.sources, 1):
+            result = result.replace(f"[{index}]", f"({source['source_reference']})")
         if self.sources:
             result += "\n\nИсточники:\n" + "\n".join(
                 f"[{index}] {source['source_reference']}" for index, source in enumerate(self.sources, 1)
@@ -258,6 +260,7 @@ class _BlockingModel:
 
     def __init__(self, proxy: ModelProxy):
         self.proxy = proxy
+        self.review_capable = os.getenv("ANSWER_REVIEW", "0").lower() in {"1", "true", "yes"}
         self.loop = asyncio.get_running_loop()
         self.lock = Lock()
         self.cancelled = False

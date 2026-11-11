@@ -46,7 +46,7 @@ function loadSaved(): SavedState {
 function buildHistory(messages: MessageView[]): ChatTurn[] {
   const turns = messages
     .filter((m) => m.role === "user" || m.role === "assistant")
-    .map((m) => ({ role: m.role as "user" | "assistant", content: m.text }))
+    .map((m) => ({ role: m.role as "user" | "assistant", content: m.text.slice(0, 4000) }))
     .slice(-LIMITS.historyMessages);
   while (
     turns.length > 1 &&
@@ -141,14 +141,14 @@ export default function App() {
     setSource(null);
   }
 
-  async function send(question: string) {
+  async function send(question: string, retryMessages?: MessageView[]) {
     const text = question.trim();
     if (!text) return;
 
     const dialogId = activeId;
     if (busyIds.includes(dialogId)) return;
-    const history = buildHistory(activeDialog.messages);
-    pushMessage(dialogId, { role: "user", text });
+    const history = buildHistory(retryMessages ?? activeDialog.messages);
+    if (!retryMessages) pushMessage(dialogId, { role: "user", text });
     patchDialog(dialogId, (d) =>
       d.messages.some((m) => m.role === "user") && d.title !== "Новый диалог"
         ? d
@@ -183,7 +183,8 @@ export default function App() {
       ...d,
       messages: d.messages.filter((m) => m.role !== "error"),
     }));
-    void send(lastUser.text);
+    const lastUserIndex = messages.findIndex((m) => m.id === lastUser.id);
+    void send(lastUser.text, messages.slice(0, lastUserIndex));
   }
 
   return (
@@ -239,7 +240,7 @@ export default function App() {
             startPulse={startPulse}
             busy={busyIds.includes(activeDialog.id)}
             messages={activeDialog.messages}
-            onSend={send}
+            onSend={(question) => { void send(question); }}
             onRetry={retry}
             onOpenSource={setSource}
           />

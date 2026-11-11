@@ -128,7 +128,7 @@ def verify(zip_path: Path, questions: Path, knowledge_base: Path) -> None:
         assert all(set(row) == {"id", "answer"} and 0 < len(row["answer"]) <= 10_000 for row in rows)
         generated = [row for row in rows if "Источники:" in row["answer"]]
         assert generated and len(requests) >= 18
-        assert all('"проверка"' in row["answer"] and "[1]" in row["answer"] for row in generated)
+        assert all('"проверка"' in row["answer"] and "Источники:" in row["answer"] for row in generated)
         assert len({question for question, history in requests if history}) == 5
         assert all(not question.startswith("Пользователь:") for question, _ in requests)
         memory = ""

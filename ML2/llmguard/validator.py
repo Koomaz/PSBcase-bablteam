@@ -118,6 +118,10 @@ def _attribution_problems(cleaned: str, items: Sequence[dict[str, Any]], questio
     for sentence in re.split(r"(?<=[.!?])\s+", cleaned):
         cites = [f"E{number}" for number in CITE_RE.findall(sentence)]
         if not cites:
+            supported = _numbers(" ".join(texts.values())) | question_numbers
+            for number in sorted(_numbers(sentence) - supported):
+                if not YEAR_ONLY.match(number):
+                    problems.append(f"число {number} не подтверждено источниками в предложении без ссылки")
             continue
         cited_numbers: set[str] = set()
         for eid in cites:

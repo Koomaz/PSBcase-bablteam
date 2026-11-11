@@ -56,7 +56,7 @@ export function Message({
 }: {
   message: MessageView;
   onOpenSource: (source: Source) => void;
-  onRetry: () => void;
+  onRetry?: () => void;
 }) {
   if (message.role === "user") {
     return (
@@ -72,9 +72,9 @@ export function Message({
         <div className="bubble bubble-error">
           <strong>Не получилось обработать запрос</strong>
           <p>{message.errorMessage}</p>
-          <button type="button" className="retry" onClick={onRetry}>
+          {onRetry && <button type="button" className="retry" onClick={onRetry}>
             Повторить
-          </button>
+          </button>}
         </div>
       </div>
     );

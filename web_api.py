@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+from pathlib import Path
 from contextlib import asynccontextmanager
 from dataclasses import asdict
 from typing import Literal
@@ -13,6 +14,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from psb_backend import AnswerKind, BackendError, Generator, Question, Turn, create_service, data_directory, env_number
@@ -154,6 +156,9 @@ def create_app(*, generator: Generator | None = None) -> FastAPI:
             raise http_error("source_not_found", 404, "Фрагмент не найден.")
         return fragment
 
+    static = Path(__file__).parent / "frontend" / "dist"
+    if static.is_dir():
+        app.mount("/", StaticFiles(directory=static, html=True), name="frontend")
     return app
 
 
