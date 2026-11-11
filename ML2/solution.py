@@ -29,9 +29,17 @@ if not __package__ and Path(__file__).with_name("llmguard").is_dir():
 from ML2.llmguard.client import LLMError, load_dotenv, make_client
 from ML2.llmguard.citations import render_citations
 from ML2.llmguard.csvio import find_questions_file, read_questions, write_submission
+from ML2.llmguard.editions import augment_editions
+from ML2.llmguard.postprocess import (
+    ensure_capitalized, strip_meta_and_redundant, strip_unsupported_inferences,
+    trim_by_question_type,
+)
 from ML2.llmguard.evidence import build_evidence, parse_question, premise_warnings, summarize_diagnostics
 from ML2.llmguard.prompt_builder import build_messages, build_repair_message, load_system_prompt
-from ML2.llmguard.validator import ensure_premise_ack, fallback_refusal, validate
+from ML2.llmguard.validator import ensure_premise_ack, ensure_premise_gap, fallback_refusal, validate
+from ML2.llmguard.verifier import (
+    build_missing_repair_message, prune_reviewed_answer, review_answer, review_minimality,
+)
 
 
 ATTRIBUTED_NUMBER = re.compile(
@@ -78,6 +86,8 @@ class Answer:
     citation_map: dict[str, str] = field(default_factory=dict)
     validated: bool = False
     is_refusal: bool = False
+    evidence_items: list[dict[str, Any]] = field(default_factory=list)
+    review_issues: list[str] = field(default_factory=list)
 
 
 class LegalAssistant:
@@ -111,6 +121,15 @@ class LegalAssistant:
         self.system_prompt = system_prompt or load_system_prompt()
         self.trace_path = Path(trace_path) if trace_path else None
         self._trace_lock = threading.Lock()
+        # Редакторский проход имеет смысл только для настоящей модели: у заглушки
+        # и тестовых двойников нет осмысленного JSON-ответа.
+        self.review_enabled = bool(getattr(self.llm, "review_capable", False)) and (
+            os.getenv("ANSWER_REVIEW", "1").strip().lower() not in ("0", "false", "no")
+        )
+        # 20 минут на весь прогон; редакторский проход — первое, что можно
+        # отключить, чтобы гарантированно успеть записать submission.csv.
+        budget = os.getenv("REVIEW_BUDGET_SECONDS", "840").strip()
+        self.review_deadline = time.monotonic() + (float(budget) if budget.replace(".", "").isdigit() else 840.0)
         if self.trace_path:
             self.trace_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -121,9 +140,20 @@ class LegalAssistant:
                 chunks, diagnostics = self.retriever.search_with_diagnostics(
                     question, top_k=self.top_k, history=history or None
                 )
-                return list(chunks or []), dict(diagnostics or {})
-            chunks = self.retriever.search(question, top_k=self.top_k, history=history or None)
-            return list(chunks or []), {}
+                chunks, diagnostics = list(chunks or []), dict(diagnostics or {})
+            else:
+                chunks = list(
+                    self.retriever.search(question, top_k=self.top_k, history=history or None) or []
+                )
+                diagnostics = {}
+            chunks, edition_note = augment_editions(self.retriever, question, chunks)
+            if edition_note:
+                warnings = diagnostics.get("warnings")
+                if not isinstance(warnings, list):
+                    warnings = []
+                warnings.append(edition_note)
+                diagnostics["warnings"] = warnings
+            return chunks, diagnostics
         except Exception as exc:  # retrieval не должен ронять весь прогон
             return [], {"warnings": [f"retrieval_error:{exc}"], "confidence": "low"}
 
@@ -206,18 +236,47 @@ class LegalAssistant:
             # второй проход оказался хуже первого (например, свалился в отказ)
             result = best
 
+        review_issues: list[str] = []
+        if (
+            self.review_enabled
+            and not result.critical
+            and result.citations
+            and not result.is_refusal
+            and len(result.cleaned.split()) >= 8
+        ):
+            result, review_issues = self._review_and_repair(
+                question, items, result, messages, conflicts
+            )
+
+        text = result.cleaned
+        if text:
+            # Мета-выводы («то есть…») и повторы уже сказанного — шум для судьи.
+            # Удаляем их детерминированно, но только если ответ сохраняет ссылки.
+            evidence_blob = " ".join(str(item.get("text", "")) for item in items)
+            stripped = strip_meta_and_redundant(text)
+            stripped = strip_unsupported_inferences(stripped, evidence_blob)
+            stripped = trim_by_question_type(question, stripped)
+            if stripped != text:
+                checked = validate(
+                    stripped, items, self.max_words, question=question, premise_conflicts=conflicts
+                )
+                if checked.citations and checked.words >= 4 and not checked.critical:
+                    text = stripped
+
         if result.ok:
-            text = result.cleaned
+            pass
         elif result.critical:
             # Неподтверждённый факт нельзя отдавать в CSV: выдумка обнуляет вопрос.
             # Вместо него — подтверждённая выдержка из того источника, на который ссылались.
             text = fallback_refusal(items, prefer=result.citations[0] if result.citations else None)
         elif result.citations and result.words >= 4:
-            text = result.cleaned  # стилевые замечания не мешают ответу
+            pass  # стилевые замечания не мешают ответу
         else:
             text = fallback_refusal(items)
 
         text = ensure_premise_ack(text, conflicts, self.max_words)
+        text = ensure_premise_gap(text, conflicts, self.max_words)
+        text = ensure_capitalized(text)
         text = render_citations(text, items, self.cite_style)
 
         return Answer(
@@ -233,7 +292,73 @@ class LegalAssistant:
             citation_map={item["eid"]: item["chunk_id"] for item in items},
             validated=result.ok,
             is_refusal=result.is_refusal,
+            evidence_items=items,
+            review_issues=review_issues,
         )
+
+    def _review_and_repair(
+        self,
+        question: str,
+        items: list[dict[str, Any]],
+        result: Any,
+        messages: list[dict[str, str]],
+        conflicts: list[str],
+    ) -> tuple[Any, list[str]]:
+        """Один редакторский проход: полнота, заземлённость, уместность, ссылки."""
+        if time.monotonic() > self.review_deadline:
+            return result, ["review_skipped_timeout"]
+        review = review_answer(self.llm, question, items, result.cleaned)
+        if review.ok or review.skipped:
+            return result, []
+
+        # 1. Лишнее и недоказанное удаляем детерминированно — без свободного
+        # переписывания, которое само добавляет новые утверждения.
+        candidate = result
+        pruned_text = prune_reviewed_answer(result.cleaned, review)
+        if pruned_text != result.cleaned:
+            pruned = validate(
+                pruned_text, items, self.max_words, question=question, premise_conflicts=conflicts
+            )
+            if pruned.citations and pruned.words >= 4 and not pruned.critical:
+                candidate = pruned
+
+        # 2. Пропущенные обязательные элементы — только адресный repair.
+        if review.missing:
+            repair = list(messages)
+            repair.append({"role": "assistant", "content": candidate.cleaned})
+            repair.append(build_missing_repair_message(review, candidate.cleaned))
+            try:
+                raw = self.llm.complete(
+                    repair, temperature=self.temperature, max_tokens=self.max_tokens * 2
+                )
+            except LLMError:
+                return candidate, review.issues
+            repaired = validate(
+                raw, items, self.max_words, question=question, premise_conflicts=conflicts
+            )
+            if repaired.citations and (
+                repaired.ok or len(repaired.issues) <= len(candidate.issues)
+            ):
+                candidate = repaired
+
+        # 3. Второе мнение — только сокращение. Нужно потому, что редактор полноты
+        # склонен прощать «полезные» подробности, а судья — нет.
+        review_issues = list(review.issues)
+        minimality_enabled = os.getenv("ANSWER_MINIMALITY", "0").strip().lower() in ("1", "true", "yes")
+        if minimality_enabled and time.monotonic() <= self.review_deadline:
+            minimal = review_minimality(self.llm, question, candidate.cleaned)
+            if not minimal.ok and not minimal.skipped:
+                pruned_text = prune_reviewed_answer(candidate.cleaned, minimal)
+                if pruned_text != candidate.cleaned:
+                    pruned = validate(
+                        pruned_text, items, self.max_words,
+                        question=question, premise_conflicts=conflicts,
+                    )
+                    if pruned.citations and pruned.words >= 4 and not pruned.critical:
+                        candidate = pruned
+                review_issues.extend(f"сокращено: {item}" for item in minimal.drop)
+
+        return candidate, review_issues
 
     def _trace(self, answer: Answer) -> None:
         if not self.trace_path:
@@ -245,10 +370,20 @@ class LegalAssistant:
             "citations": answer.citations,
             "attempts": answer.attempts,
             "issues": answer.issues,
+            "review_issues": answer.review_issues,
             "evidence_count": answer.evidence_count,
             "confidence": answer.diagnostics.get("confidence"),
             "warnings": answer.diagnostics.get("warnings"),
             "elapsed_ms": answer.elapsed_ms,
+            "evidence": [
+                {
+                    "eid": item.get("eid"),
+                    "source": item.get("source"),
+                    "text": item.get("text"),
+                    "meta": item.get("meta"),
+                }
+                for item in answer.evidence_items
+            ],
         }
         with self._trace_lock:
             with self.trace_path.open("a", encoding="utf-8") as handle:
@@ -295,13 +430,21 @@ def main(argv: list[str] | None = None) -> int:
 
     Retriever = _import_retriever()
     started = time.perf_counter()
+    # Dense-индекс на старте — это десятки запросов к /embeddings. На платформе
+    # они могут быть медленными или недоступными, а лимит — 20 минут на всё.
+    # Локальный BM25 + TF-IDF работает без сети и даёт Recall@5 ≈ 0,95 на демо.
+    dense = os.getenv("RETRIEVAL_DENSE", "0").strip().lower() in ("1", "true", "yes")
     try:
-        retriever = Retriever.from_data_dir(str(data_dir))
+        try:
+            retriever = Retriever.from_data_dir(str(data_dir), dense=dense)
+        except TypeError:  # старая версия retrieval_runtime без параметра dense
+            retriever = Retriever.from_data_dir(str(data_dir))
     except FileNotFoundError:
         artifacts = data_dir / "artifacts"
         if not (artifacts / "index_manifest.json").is_file():
             raise
         retriever = Retriever.from_artifacts(str(artifacts))
+    print(f"Поиск: {'dense+local' if dense else 'local (BM25+TF-IDF)'}", file=sys.stderr)
     print(f"Индекс загружен за {time.perf_counter() - started:.1f} c", file=sys.stderr)
 
     assistant = LegalAssistant(

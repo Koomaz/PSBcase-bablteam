@@ -52,6 +52,8 @@ def _doc_label(meta: dict[str, Any], genitive: bool = False) -> str:
             edition = _date_ru(meta.get("edition_date"))
             return f"{base} в ред. от {edition}" if edition else base
         label = f"{base} № {number}" if number else base
+        if doc_type in ("memo", "letter") and meta.get("doc_date"):
+            label += f" от {_date_ru(meta.get('doc_date'))}"
         if doc_type == "addendum" and meta.get("parent_doc_number"):
             label += f" к договору № {meta['parent_doc_number']}"
         return label
@@ -117,6 +119,39 @@ def human_reference(item: dict[str, Any]) -> str:
     return label
 
 
+DUP_PARENS = re.compile(r"\(([^()]{1,120})\)\s*\(([^()]{1,160})\)")
+REF_NUM = re.compile(r"(?:п\.|пункт|ст\.|статья|ч\.|часть)\s*([\d.]+)", re.I)
+
+
+def _reference_numbers(text: str) -> set[str]:
+    return {value.rstrip(".") for value in REF_NUM.findall(text or "")}
+
+
+def collapse_duplicate_refs(text: str) -> str:
+    """Убирает двойную ссылку «(п. 6.2) (п. 6.2 договора № …)».
+
+    Модель иногда пишет человекочитаемый пункт сама и добавляет [E2]; после
+    подстановки получаются две скобки подряд. Оставляем более полную ссылку.
+    """
+    if not text:
+        return text
+
+    def replace(match: re.Match[str]) -> str:
+        left, right = match.group(1).strip(), match.group(2).strip()
+        left_numbers, right_numbers = _reference_numbers(left), _reference_numbers(right)
+        if left_numbers & right_numbers:
+            keep = right if len(right) >= len(left) else left
+            return f"({keep})"
+        return match.group(0)
+
+    previous = None
+    result = text
+    while previous != result:
+        previous = result
+        result = DUP_PARENS.sub(replace, result)
+    return result
+
+
 def render_citations(
     text: str,
     items: Sequence[dict[str, Any]],
@@ -150,4 +185,4 @@ def render_citations(
     result = re.sub(r"\(\s+", "(", result)
     result = re.sub(r"\s+\)", ")", result)
     result = re.sub(r"[ \t]{2,}", " ", result)
-    return result.strip()
+    return collapse_duplicate_refs(result.strip())

@@ -35,6 +35,7 @@ class LLMError(RuntimeError):
 
 class ChatClient:
     last_finish_reason: str | None = None
+    review_capable = True
 
     def __init__(
         self,
@@ -144,6 +145,7 @@ class MockClient:
     """
 
     configured = True
+    review_capable = False
     model = "mock-extractive"
     last_finish_reason = "stop"
 

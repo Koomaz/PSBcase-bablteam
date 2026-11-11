@@ -31,7 +31,14 @@ DISCREPANCY_MARKERS = (
     "не подтвержда", "не соответству", "не закрепл", "не встреча", "не совпада",
     "не указан", "не назван", "отличается", "неверн", "ошибоч", "в действительности",
     "фактически", "на самом деле", "а не ",
+    # сравнение с порогом/суммой из вопроса — законный вывод из цитируемой нормы
+    "превыша", "больше", "меньше", "выше", "ниже", "не достига", "равн", "соответству",
 )
+
+YEAR_ONLY = re.compile(r"^(?:19|20)\d{2}$")
+DATE_RE = re.compile(r"\b\d{1,2}[./]\d{1,2}[./]\d{2,4}\b")
+MULT_RE = re.compile(r"(\d+(?:[.,]\d+)?)\s*(млн|млрд|тыс)", re.I)
+MULTIPLIERS = {"млн": 1_000_000, "млрд": 1_000_000_000, "тыс": 1_000}
 
 REFUSAL_TEMPLATE_HINT = (
     "укажи, каких именно документов или положений не хватает"
@@ -65,8 +72,17 @@ def _normalize_number(raw: str) -> str:
 
 
 def _numbers(text: str) -> set[str]:
-    """Числа с единицей измерения (5 дней, 0,1%, 24 месяца) и любые числа из 3+ цифр."""
+    """Числа с единицей измерения (5 дней, 0,1%, 24 месяца) и любые числа из 3+ цифр.
+
+    Даты «10.01.2023» не считаются количественными утверждениями: иначе фрагменты
+    «10.01» и «01.03» превращаются в 1001 и 103 и валят корректный ответ.
+    """
+    text = DATE_RE.sub(" ", text or "")
     out: set[str] = set()
+    for match in MULT_RE.finditer(text):
+        value = float(match.group(1).replace(",", ".")) * MULTIPLIERS[match.group(2).lower()]
+        if value >= 1000:
+            out.add(str(int(round(value))))
     for match in NUM_RE.finditer(text):
         digits = _normalize_number(match.group(0))
         if len(digits) >= 3 or UNIT_HINT.search(match.group(0)):
@@ -108,6 +124,10 @@ def _attribution_problems(cleaned: str, items: Sequence[dict[str, Any]], questio
             cited_numbers |= _numbers(texts.get(eid, ""))
         refuting = any(marker in sentence.lower() for marker in DISCREPANCY_MARKERS)
         for number in sorted(_numbers(sentence) - cited_numbers):
+            # Годы редакций и даты — не количественные утверждения: 2024/2025
+            # не могут быть «выдуманной суммой», а в тексте пункта их может не быть.
+            if YEAR_ONLY.match(number):
+                continue
             if refuting and number in question_numbers:
                 continue
             key = f"{number}:{','.join(cites)}"
@@ -260,6 +280,26 @@ def ensure_premise_ack(text: str, conflicts: Sequence[str], max_words: int = 180
     if len(WORD_RE.findall(prefix + text)) > max_words:
         return text
     return (prefix + text).replace("  ", " ").strip()
+
+
+def ensure_premise_gap(
+    text: str, conflicts: Sequence[str], max_words: int = 180
+) -> str:
+    """Для ложной посылки прямо фиксирует отсутствие подтверждающих документов."""
+    if not conflicts or not text.strip():
+        return text
+    if re.search(r"(?:документов|сведений|подтверждений).{0,200}(?:нет|не\s)", text, re.I):
+        return text
+    values = ", ".join(f"«{value}»" for value in conflicts if value)
+    if not values:
+        return text
+    addition = (
+        f" Документов, подтверждающих указанные в вопросе значения ({values}), "
+        "в предоставленных материалах нет."
+    )
+    if len(WORD_RE.findall(text + addition)) > max_words:
+        return text
+    return text.rstrip() + addition
 
 
 def fallback_refusal(items: Sequence[dict[str, Any]], prefer: str | None = None) -> str:
