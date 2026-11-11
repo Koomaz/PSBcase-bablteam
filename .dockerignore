@@ -13,3 +13,13 @@
 !ML2/llmguard/*.py
 !ML2/prompts/
 !ML2/prompts/system_prompt.md
+
+!frontend/
+!frontend/package.json
+!frontend/package-lock.json
+!frontend/index.html
+!frontend/tsconfig*.json
+!frontend/vite.config.ts
+!frontend/postcss.config.mjs
+!frontend/src/
+!frontend/src/**

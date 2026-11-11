@@ -52,9 +52,14 @@ def main():
                "PSB_REQUEST_TIMEOUT": "0.3"}
         command = ["docker", "compose", "-p", "psb-backend-verification"]
         try:
-            subprocess.run(command + ["up", "-d", "--wait", "--wait-timeout", "60"], env=env, check=True)
+            subprocess.run(command + ["up", "--build", "-d", "--wait", "--wait-timeout", "60"], env=env, check=True)
             with httpx.Client(base_url=f"http://127.0.0.1:{port}", timeout=5, trust_env=False) as client:
                 assert client.get("/health/ready").status_code == 200
+                page = client.get("/")
+                assert page.status_code == 200 and "<script" in page.text
+                import re
+                asset = re.search(r'src="([^"]+\.js)"', page.text)[1]
+                assert client.get(asset).status_code == 200
                 question = "Что сказано в п. 4.2 договора ПТ-05/2023?"
                 response = client.post("/api/chat", json={"question": question})
                 response.raise_for_status()
@@ -65,9 +70,9 @@ def main():
                 history = [{"role": "user", "content": question}]
                 followup = client.post("/api/chat", json={"question": "А что сказано в п. 4.1?", "history": history})
                 followup.raise_for_status()
-                assert json.loads(calls[-1][1]["content"])["history"] == history
+                assert history[0]["content"] in calls[-1][1]["content"]
                 assert client.post("/api/chat", json={"question": question}).status_code == 200
-                assert calls[-1][1]["content"].startswith("<evidence>")
+                assert "<user_context>\n(нет)\n</user_context>" in calls[-1][1]["content"]
                 empty = client.post("/api/chat", json={"question": "рецепт яблочного пирога"})
                 assert empty.status_code == 200 and empty.json()["kind"] == "insufficient"
                 mode[0] = "error"

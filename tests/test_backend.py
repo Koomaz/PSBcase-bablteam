@@ -217,6 +217,12 @@ class ModelChecks(Fixture):
         with self.assertRaisesRegex(BackendError, "^invalid_response$"):
             self.ask(proxy)
 
+    def test_uncited_fabricated_quantity_is_rejected(self):
+        def proxy(_):
+            return completion(MODEL_TEXT + " За просрочку покупатель уплачивает штраф 999999 рублей.")
+        with self.assertRaisesRegex(BackendError, "^invalid_response$"):
+            self.ask(proxy)
+
     def test_neighbor_citation_uses_full_metadata(self):
         def proxy(request):
             content = json.loads(request.content)["messages"][-1]["content"]

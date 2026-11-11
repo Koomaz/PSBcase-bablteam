@@ -277,21 +277,22 @@ class LegalAssistant:
         text = ensure_premise_ack(text, conflicts, self.max_words)
         text = ensure_premise_gap(text, conflicts, self.max_words)
         text = ensure_capitalized(text)
+        final = validate(text, items, self.max_words, question=question, premise_conflicts=conflicts)
         text = render_citations(text, items, self.cite_style)
 
         return Answer(
             qid=str(qid),
             question=question,
             text=text,
-            citations=result.citations,
+            citations=final.citations,
             attempts=attempts,
             issues=result.issues,
             evidence_count=len(items),
             diagnostics=diagnostics,
             elapsed_ms=int((time.perf_counter() - started) * 1000),
             citation_map={item["eid"]: item["chunk_id"] for item in items},
-            validated=result.ok,
-            is_refusal=result.is_refusal,
+            validated=bool(text.strip()) and not result.critical and not final.critical,
+            is_refusal=final.is_refusal,
             evidence_items=items,
             review_issues=review_issues,
         )

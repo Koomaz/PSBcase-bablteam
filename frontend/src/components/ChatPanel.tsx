@@ -77,7 +77,7 @@ export function ChatPanel({
             key={message.id}
             message={message}
             onOpenSource={onOpenSource}
-            onRetry={onRetry}
+            onRetry={message.id === messages[messages.length - 1]?.id && !busy ? onRetry : undefined}
           />
         ))}
 

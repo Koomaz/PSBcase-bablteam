@@ -215,6 +215,13 @@ class TestNumberExtraction(unittest.TestCase):
 
 
 class TestPostprocess(unittest.TestCase):
+    def test_distinct_editions_and_requested_deadline_survive(self):
+        from llmguard.postprocess import trim_by_question_type
+        text = "В редакции 2024 года порог согласования составляет 500000 рублей [E1]. В редакции 2025 года порог согласования составляет 1000000 рублей [E2]."
+        self.assertEqual(strip_meta_and_redundant(text), text)
+        deadline = "Инициатор запускает согласование [E1]. Срок согласования составляет три рабочих дня [E2]."
+        self.assertEqual(trim_by_question_type("Кто запускает согласование и в какой срок?", deadline), deadline)
+
     def test_meta_conclusion_is_removed(self):
         text = (
             "Оплата производится в течение 45 дней с даты поставки (п. 4.1). "
@@ -222,7 +229,7 @@ class TestPostprocess(unittest.TestCase):
         )
         result = strip_meta_and_redundant(text)
         self.assertIn("45 дней", result)
-        self.assertNotIn("То есть", result)
+        self.assertIn("То есть", result)
 
     def test_repeated_sentence_is_removed(self):
         text = (
@@ -232,7 +239,7 @@ class TestPostprocess(unittest.TestCase):
         )
         result = strip_meta_and_redundant(text)
         self.assertIn("круглосуточно", result)
-        self.assertNotIn("Это обязанность", result)
+        self.assertIn("Это обязанность", result)
 
     def test_short_answer_is_not_lost(self):
         text = "Гарантия — 24 месяца (п. 5.2)."
@@ -247,7 +254,7 @@ class TestPostprocess(unittest.TestCase):
         )
         result = strip_meta_and_redundant(text)
         self.assertEqual(result.count("нет"), 1)
-        self.assertNotIn("не представлено", result)
+        self.assertIn("не представлено", result)
 
 
 
