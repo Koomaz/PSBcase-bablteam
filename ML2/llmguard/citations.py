@@ -143,8 +143,9 @@ def render_citations(
         return rendered
 
     result = CITE_RUN.sub(replace, text)
-    # Модель иногда упоминает служебный ID без скобок («приведённая в E1»).
-    result = re.sub(r"\s*\b[EЕ]\d{1,2}\b", "", result)
+    if style == "ref":
+        # Модель иногда упоминает служебный ID без скобок («приведённая в E1»).
+        result = re.sub(r"\s*\b[EЕ]\d{1,2}\b", "", result)
     result = re.sub(r"\s+([,.;:!?])", r"\1", result)
     result = re.sub(r"\(\s+", "(", result)
     result = re.sub(r"\s+\)", ")", result)
