@@ -4,15 +4,20 @@ export function DialogsList({
   dialogs,
   activeId,
   onSelect,
+  onClear,
 }: {
   dialogs: Dialog[];
   activeId: number;
   onSelect: (id: number) => void;
+  onClear: () => void;
 }) {
   return (
     <aside className="dialogs">
       <div className="dialogs-head">
         <h2>Диалоги</h2>
+        <button type="button" className="clear-history" onClick={onClear}>
+          Удалить историю
+        </button>
       </div>
       <div className="dialog-list">
         {dialogs.map((dialog) => {

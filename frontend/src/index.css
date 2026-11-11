@@ -205,12 +205,33 @@ body {
 
 .dialogs-head {
   padding: 16px 18px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
 
 .dialogs-head h2 {
   margin: 0;
   font-size: 0.95rem;
   color: var(--text);
+}
+
+.clear-history {
+  border: none;
+  background: none;
+  color: var(--text-faint);
+  font: inherit;
+  font-size: 0.74rem;
+  padding: 4px 6px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s;
+}
+
+.clear-history:hover {
+  color: var(--error-text);
+  background: var(--error-bg);
 }
 
 .dialog-list {

@@ -27,6 +27,28 @@ function today(): string {
   return new Date().toLocaleDateString("ru-RU", { day: "numeric", month: "long" });
 }
 
+const STORAGE_KEY = "psb.dialogs";
+
+interface SavedState {
+  dialogs: Dialog[];
+  activeId: number;
+}
+
+function loadSaved(): SavedState {
+  try {
+    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "null") as SavedState | null;
+    if (saved?.dialogs?.length) {
+      return { dialogs: saved.dialogs, activeId: saved.activeId ?? saved.dialogs[0].id };
+    }
+  } catch {
+    /* повреждённые данные — начинаем с чистого листа */
+  }
+  return {
+    dialogs: [{ id: 1, title: "Новый диалог", date: today(), messages: [] }],
+    activeId: 1,
+  };
+}
+
 function buildHistory(messages: MessageView[]): ChatTurn[] {
   const turns = messages
     .filter((m) => m.role === "user" || m.role === "assistant")
@@ -51,13 +73,16 @@ export default function App() {
       ? "dark"
       : "light";
   });
-  const [dialogs, setDialogs] = useState<Dialog[]>(() => [
-    { id: 1, title: "Новый диалог", date: today(), messages: [] },
-  ]);
-  const [activeId, setActiveId] = useState(1);
+  const [saved] = useState(loadSaved);
+  const [dialogs, setDialogs] = useState<Dialog[]>(saved.dialogs);
+  const [activeId, setActiveId] = useState(saved.activeId);
   const [busy, setBusy] = useState(false);
-  const nextDialogId = useRef(2);
-  const nextMessageId = useRef(1);
+  const nextDialogId = useRef(
+    Math.max(...saved.dialogs.map((d) => d.id)) + 1
+  );
+  const nextMessageId = useRef(
+    Math.max(0, ...saved.dialogs.flatMap((d) => d.messages.map((m) => m.id))) + 1
+  );
 
   useEffect(() => {
     api
@@ -70,6 +95,11 @@ export default function App() {
     document.documentElement.dataset.colorScheme = theme;
     localStorage.setItem("theme", theme);
   }, [theme]);
+
+  // диалоги переживают перезагрузку страницы
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ dialogs, activeId }));
+  }, [dialogs, activeId]);
 
   const activeDialog = dialogs.find((d) => d.id === activeId) ?? dialogs[0];
 
@@ -90,6 +120,16 @@ export default function App() {
       { id, title: "Новый диалог", date: today(), messages: [] },
       ...prev,
     ]);
+    setActiveId(id);
+    setSource(null);
+  }
+
+  function clearHistory() {
+    if (!window.confirm("Удалить всю историю диалогов? Это действие нельзя отменить.")) {
+      return;
+    }
+    const id = nextDialogId.current++;
+    setDialogs([{ id, title: "Новый диалог", date: today(), messages: [] }]);
     setActiveId(id);
     setSource(null);
   }
@@ -171,6 +211,7 @@ export default function App() {
         <DialogsList
           dialogs={dialogs}
           activeId={activeId}
+          onClear={clearHistory}
           onSelect={(id) => {
             setActiveId(id);
             setSource(null);
