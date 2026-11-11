@@ -1,0 +1,921 @@
+@import "tailwindcss";
+
+/* ---- тема: база из openai/openai-chatkit-starter-app (MIT), палитра ----
+   Атрибут data-color-scheme на <html> всегда выставляет приложение
+   (см. App.tsx): "light" | "dark", выбор пользователя хранится в localStorage. */
+
+:root {
+  --background: #ffffff;
+  --foreground: #171717;
+  color-scheme: light;
+
+  --page: #e2e8f0;
+  --surface: #ffffff;
+  --surface-2: #f8fafc;
+  --surface-hover: #f1f5f9;
+  --text: #171717;
+  --text-soft: #5a6478;
+  --text-faint: #94a3b8;
+  --line: #cbd5e1;
+  --line-soft: #e2e8f0;
+  --accent: #1e3a8a;
+  --accent-hover: #172e6e;
+  --accent-soft: #e0e7ff;
+  --accent-soft-hover: #c7d2fe;
+  --on-accent: #ffffff;
+  --bubble-user: #1e3a8a;
+  --bubble-user-text: #ffffff;
+  --error-bg: #fef2f2;
+  --error-line: #fecaca;
+  --error-text: #b91c1c;
+  --error-soft: #fee2e2;
+  --warn-bg: #fef3c7;
+  --warn-text: #92400e;
+  --quote-bg: #f8fafc;
+  --highlight: #fde68a;
+  --scroll-thumb: rgba(100, 116, 139, 0.4);
+  --scroll-thumb-hover: rgba(100, 116, 139, 0.55);
+  --t: 200ms;
+  --ease: cubic-bezier(0.4, 0, 0.2, 1);
+  --transition:
+    color var(--t) var(--ease),
+    background-color var(--t) var(--ease),
+    border-color var(--t) var(--ease),
+    box-shadow var(--t) var(--ease),
+    opacity var(--t) var(--ease),
+    transform var(--t) var(--ease);
+  --shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+  --shadow-lift: 0 4px 10px rgba(15, 23, 42, 0.1);
+}
+
+:root[data-color-scheme="dark"] {
+  --background: #111827;
+  --foreground: #e5e7eb;
+  color-scheme: dark;
+
+  --page: #0b1220;
+  --surface: #111827;
+  --surface-2: #1f2937;
+  --surface-hover: #1f2937;
+  --text: #e5e7eb;
+  --text-soft: #9aa7b8;
+  --text-faint: #64748b;
+  --line: #334155;
+  --line-soft: #273449;
+  --accent: #93b0ff;
+  --accent-hover: #b3c6ff;
+  --accent-soft: #1e2a4a;
+  --accent-soft-hover: #2a3a63;
+  --on-accent: #0b1220;
+  --bubble-user: #2c4390;
+  --bubble-user-text: #f0f4ff;
+  --error-bg: #2a1618;
+  --error-line: #5c2b2b;
+  --error-text: #fca5a5;
+  --error-soft: #3a1c1c;
+  --warn-bg: #2c2414;
+  --warn-text: #fcd34d;
+  --quote-bg: #1a2436;
+  --highlight: #7c5e10;
+  --scroll-thumb: rgba(148, 163, 184, 0.35);
+  --scroll-thumb-hover: rgba(148, 163, 184, 0.5);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --shadow-lift: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: Arial, Helvetica, sans-serif;
+  --font-mono: SFMono-Regular, Consolas, "Liberation Mono", monospace;
+}
+
+* { box-sizing: border-box; }
+
+/* полосы прокрутки: тонкая палочка 2px, толстеет при наведении.
+   Дорожка фиксированной ширины — контент не сдвигается при расширении. */
+
+@supports (-moz-appearance: none) {
+  /* Firefox */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--scroll-thumb) transparent;
+  }
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--scroll-thumb);
+  background-clip: padding-box;
+  border: 3px solid transparent;
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb:hover,
+:is(.messages, .dialog-list, .source-panel-body, .doc-modal-body).scroll-thick::-webkit-scrollbar-thumb {
+  background: var(--scroll-thumb-hover);
+  background-clip: padding-box;
+  border-width: 1px; /* палочка 6px внутри той же дорожки — контент не двигается */
+}
+
+html, body {
+  height: 100%;
+  overflow-x: hidden;
+}
+
+body {
+  margin: 0;
+  background: var(--page);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  overflow: hidden;
+}
+
+/* ---- оболочка приложения ---- */
+
+.page {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--page);
+  overflow: hidden;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 20px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.layout {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.dialogs-wrap {
+  display: contents;
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  background: var(--surface);
+  position: relative;
+}
+
+/* ярлычок открытия диалогов — только в вертикальном режиме */
+
+.dialogs-tab {
+  display: none;
+}
+
+.dialogs-close {
+  display: none;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.brand-mark {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  background: var(--accent);
+  color: var(--on-accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+}
+
+.brand h1 {
+  margin: 0;
+  font-size: 1.02rem;
+  color: var(--text);
+}
+
+.theme-toggle {
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--text);
+  border-radius: 10px;
+  padding: 8px 12px;
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.theme-toggle:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* диалоги */
+
+.dialogs {
+  width: 280px;
+  flex-shrink: 0;
+  background: var(--surface);
+  border-right: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.dialogs-head {
+  padding: 16px 18px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.dialogs-head h2 {
+  margin: 0;
+  font-size: 0.95rem;
+  color: var(--text);
+}
+
+.clear-history {
+  border: none;
+  background: none;
+  color: var(--text-faint);
+  font: inherit;
+  font-size: 0.74rem;
+  padding: 4px 6px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.clear-history:hover {
+  color: var(--error-text);
+  background: var(--error-bg);
+}
+
+.dialog-list {
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 4px 10px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.dialog-item {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  text-align: left;
+  border: 1px solid transparent;
+  background: none;
+  border-radius: 12px;
+  padding: 10px 12px;
+  font: inherit;
+  color: var(--text);
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.dialog-item:hover { background: var(--surface-hover); }
+
+.dialog-item.active {
+  background: var(--accent-soft);
+  border-color: var(--accent-soft-hover);
+}
+
+/* обратная связь при «создании» чата */
+
+@keyframes dialog-pop {
+  0% { transform: scale(0.96); opacity: 0.5; }
+  60% { transform: scale(1.015); }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+.dialog-item.pop {
+  animation: dialog-pop 0.35s ease-out;
+}
+
+.dialog-title {
+  font-size: 0.88rem;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dialog-snippet {
+  font-size: 0.78rem;
+  color: var(--text-soft);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dialog-date {
+  font-size: 0.72rem;
+  color: var(--text-faint);
+}
+
+.new-dialog {
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--text);
+  border-radius: 10px;
+  padding: 8px 14px;
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.new-dialog:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* ---- чат ---- */
+
+.messages {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 24px 16px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.empty {
+  margin: auto;
+  max-width: 520px;
+  text-align: center;
+  color: var(--text-soft);
+  animation: rise-in 0.3s ease-out;
+}
+
+.empty h2 {
+  color: var(--text);
+  font-size: 1.3rem;
+  margin-bottom: 8px;
+}
+
+.examples {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.example {
+  border: 1px solid var(--line);
+  background: var(--surface);
+  border-radius: 14px;
+  padding: 12px 16px;
+  font: inherit;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+  box-shadow: var(--shadow);
+  transition: var(--transition);
+  animation: rise-in 0.35s ease-out backwards;
+}
+
+.example:nth-child(2) { animation-delay: 70ms; }
+.example:nth-child(3) { animation-delay: 140ms; }
+
+.example:hover {
+  border-color: var(--accent);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-lift);
+}
+
+.msg {
+  display: flex;
+  max-width: 760px;
+  width: fit-content;
+}
+
+/* направленные анимации появления */
+
+@keyframes msg-in-right {
+  from { opacity: 0; transform: translateX(28px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes msg-in-left {
+  from { opacity: 0; transform: translateX(-28px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes drawer-in-right {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+
+@keyframes drawer-in-left {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(0); }
+}
+
+@keyframes rise-in {
+  from { opacity: 0; transform: translateY(28px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+.msg-user {
+  align-self: flex-end;
+  animation: msg-in-right 0.25s ease-out;
+}
+
+.msg-assistant {
+  align-self: flex-start;
+  animation: msg-in-left 0.25s ease-out;
+}
+
+.msg-error {
+  align-self: flex-start;
+  animation: msg-in-left 0.25s ease-out;
+}
+
+.bubble {
+  border: 1px solid var(--line-soft);
+  border-radius: 14px;
+  padding: 12px 16px;
+  line-height: 1.55;
+  overflow-wrap: break-word;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  color: var(--text);
+}
+
+.bubble-user {
+  background: var(--bubble-user);
+  border-color: var(--bubble-user);
+  color: var(--bubble-user-text);
+  border-bottom-right-radius: 4px;
+}
+
+.msg-assistant .bubble { border-bottom-left-radius: 4px; }
+
+.answer { white-space: pre-wrap; }
+
+.badge {
+  display: inline-block;
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-radius: 999px;
+  padding: 3px 10px;
+  margin-bottom: 8px;
+}
+
+.badge-partial { background: var(--accent-soft); color: var(--accent); }
+.badge-clarification { background: var(--warn-bg); color: var(--warn-text); }
+.badge-insufficient { background: var(--warn-bg); color: var(--warn-text); }
+.badge-refusal { background: var(--error-soft); color: var(--error-text); }
+
+/* цитаты */
+
+.cite {
+  display: inline;
+  border: none;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font: inherit;
+  font-weight: 600;
+  font-size: 0.8em;
+  line-height: 1;
+  padding: 2px 4px;
+  margin: 0;
+  border-radius: 6px;
+  cursor: pointer;
+  vertical-align: baseline;
+  transition: var(--transition);
+}
+
+.cite:hover { background: var(--accent-soft-hover); }
+
+/* источники под ответом */
+
+.source-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--line);
+}
+
+.source-chip {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  text-align: left;
+  border: 1px solid var(--line-soft);
+  background: var(--surface-2);
+  border-radius: 10px;
+  padding: 8px 12px;
+  font: inherit;
+  font-size: 0.84rem;
+  color: var(--text);
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.source-chip:hover { border-color: var(--accent); }
+
+.chip-num { color: var(--accent); font-weight: 700; }
+.chip-ref { color: var(--text-soft); }
+
+/* индикатор обработки */
+
+.bubble-typing {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 16px;
+}
+
+.bubble-typing span {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--line);
+  animation: blink 1.2s infinite ease-in-out;
+}
+
+.bubble-typing span:nth-child(2) { animation-delay: 0.2s; }
+.bubble-typing span:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes blink {
+  0%, 80%, 100% { opacity: 0.25; transform: translateY(0); }
+  40% { opacity: 1; transform: translateY(-3px); }
+}
+
+/* ошибки */
+
+.bubble-error {
+  background: var(--error-bg);
+  border-color: var(--error-line);
+}
+
+.bubble-error p {
+  margin: 6px 0 12px;
+  color: var(--error-text);
+}
+
+.retry {
+  border: 1px solid var(--error-text);
+  background: transparent;
+  color: var(--error-text);
+  border-radius: 10px;
+  padding: 8px 16px;
+  font: inherit;
+  font-size: 0.86rem;
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.retry:hover { background: var(--error-soft); }
+
+/* композер */
+
+.composer {
+  display: flex;
+  gap: 12px;
+  padding: 12px 16px 4px;
+  align-items: flex-end;
+}
+
+.composer textarea {
+  flex: 1;
+  resize: none;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 12px 16px;
+  font: inherit;
+  line-height: 1.45;
+  background: var(--surface);
+  color: var(--text);
+  outline: none;
+  max-height: calc(6 * 1.45em + 26px); /* максимум 6 строк, дальше внутренняя прокрутка */
+  overflow-y: auto;
+  transition: border-color var(--t) var(--ease), box-shadow var(--t) var(--ease);
+}
+
+.composer textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.composer textarea::placeholder { color: var(--text-faint); }
+
+.send {
+  border: none;
+  border-radius: 14px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font: inherit;
+  font-weight: 600;
+  padding: 12px 22px;
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.send:hover:not(:disabled) { background: var(--accent-hover); }
+.send:disabled { opacity: 0.55; cursor: default; }
+
+.composer-hint {
+  display: flex;
+  gap: 16px;
+  padding: 6px 18px 12px;
+  font-size: 0.74rem;
+  color: var(--text-faint);
+}
+
+/* ---- панель источника ---- */
+
+.source-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(430px, 100%);
+  background: var(--surface);
+  border-left: 1px solid var(--line);
+  box-shadow: -12px 0 32px rgba(15, 23, 42, 0.12);
+  display: flex;
+  flex-direction: column;
+  z-index: 20;
+  animation: drawer-in-right 0.28s ease-out;
+}
+
+.source-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--line);
+}
+
+.source-panel-head h2 {
+  margin: 0;
+  font-size: 0.98rem;
+  color: var(--text);
+}
+
+.panel-close {
+  border: none;
+  background: none;
+  font-size: 1.5rem;
+  line-height: 1;
+  color: var(--text-soft);
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 8px;
+  transition: var(--transition);
+}
+
+.panel-close:hover { background: var(--surface-hover); color: var(--text); }
+
+.source-panel-body {
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 18px 20px 32px;
+}
+
+.source-panel-body h3 {
+  margin: 0 0 14px;
+  font-size: 1rem;
+  line-height: 1.4;
+  color: var(--text);
+}
+
+.meta {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 18px;
+}
+
+.meta-row {
+  display: flex;
+  gap: 12px;
+  font-size: 0.84rem;
+  border-bottom: 1px solid var(--line-soft);
+  padding-bottom: 7px;
+  color: var(--text);
+}
+
+.meta-label { color: var(--text-soft); min-width: 132px; }
+.meta-value { overflow-wrap: break-word; }
+
+.fragment h4 {
+  margin: 0 0 10px;
+  font-size: 0.84rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-soft);
+}
+
+.fragment blockquote {
+  margin: 0;
+  padding: 14px 16px;
+  background: var(--quote-bg);
+  border-left: 3px solid var(--accent);
+  border-radius: 0 10px 10px 0;
+  line-height: 1.6;
+  font-size: 0.92rem;
+  white-space: pre-wrap;
+  color: var(--text);
+}
+
+.fragment-loader, .fragment-error {
+  font-size: 0.9rem;
+  padding: 12px 0;
+  color: var(--text-soft);
+}
+
+.fragment-error { color: var(--error-text); }
+
+/* открытие полного документа */
+
+.doc-open {
+  margin-top: 14px;
+  width: 100%;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--text);
+  border-radius: 10px;
+  padding: 10px 14px;
+  font: inherit;
+  font-size: 0.88rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.doc-open:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.doc-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  z-index: 40;
+  animation: fade-in 0.2s ease-out;
+}
+
+.doc-modal-card {
+  width: min(920px, 100%);
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  box-shadow: var(--shadow-lift);
+  overflow: hidden;
+  animation: rise-in 0.28s ease-out;
+}
+
+.doc-modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--line);
+}
+
+.doc-modal-head h2 {
+  margin: 0;
+  font-size: 0.98rem;
+}
+
+.doc-modal-body {
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 18px 22px 28px;
+}
+
+.doc-text {
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  line-height: 1.65;
+  font-size: 0.94rem;
+  color: var(--text);
+}
+
+.doc-highlight {
+  background: var(--highlight, #fde68a);
+  color: var(--text);
+  border-radius: 4px;
+  padding: 1px 2px;
+  box-shadow: 0 0 0 2px var(--highlight, #fde68a);
+}
+
+@media (max-width: 720px) {
+  /* компактная верхняя строка: только значки и короткие подписи */
+  .brand h1 { display: none; }
+  .wide-label { display: none; }
+
+  /* ярлычок «Диалоги» в левом верхнем углу окна чата */
+  .dialogs-tab {
+    display: block;
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    z-index: 5;
+    border: 1px solid var(--line);
+    background: var(--surface);
+    color: var(--text-soft);
+    border-radius: 10px;
+    padding: 6px 12px;
+    font: inherit;
+    font-size: 0.78rem;
+    cursor: pointer;
+    box-shadow: var(--shadow);
+    transition: var(--transition);
+  }
+
+  .dialogs-tab:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  /* выбор диалога — на всю область вместо чата */
+  .dialogs-wrap {
+    display: none;
+  }
+
+  .dialogs-wrap.open {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 30;
+    background: var(--surface);
+    animation: drawer-in-left 0.25s ease-out;
+  }
+
+  .dialogs-wrap.open .dialogs {
+    width: 100%;
+    height: 100%;
+    border-right: none;
+  }
+
+  .dialogs-close { display: block; }
+
+  .topbar { padding: 12px 14px; }
+  .messages { padding: 52px 10px 8px; }
+  .composer { padding: 10px 10px 4px; }
+  .composer-hint { padding: 4px 12px 10px; }
+}
