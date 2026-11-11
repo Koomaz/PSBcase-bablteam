@@ -7,22 +7,33 @@ const QUESTION_LIMIT = 4000;
 export function ChatPanel({
   messages,
   busy,
+  startPulse,
   onSend,
   onRetry,
   onOpenSource,
 }: {
   messages: MessageView[];
   busy: boolean;
+  startPulse: number;
   onSend: (question: string) => void;
   onRetry: () => void;
   onOpenSource: (source: Source) => void;
 }) {
   const [input, setInput] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // поле ввода растёт по содержимому до 6 строк (дальше — прокрутка внутри)
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }, [input]);
 
   useEffect(() => {
     const el = scrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
+    if (el) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
   }, [messages, busy]);
 
   function submit() {
@@ -36,7 +47,7 @@ export function ChatPanel({
     <>
       <div className="messages" ref={scrollRef}>
         {messages.length === 0 && (
-          <div className="empty">
+          <div className="empty" key={startPulse}>
             <h2>Задайте вопрос по юридическим документам</h2>
             <p>
               Ассистент найдёт применимые положения, приведёт ссылки на пункты
@@ -89,6 +100,7 @@ export function ChatPanel({
         }}
       >
         <textarea
+          ref={textareaRef}
           value={input}
           rows={1}
           maxLength={QUESTION_LIMIT}

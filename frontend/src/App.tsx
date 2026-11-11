@@ -3,6 +3,7 @@ import { ChatPanel } from "./components/ChatPanel";
 import { DialogsList } from "./components/DialogsList";
 import { SourcePanel } from "./components/SourcePanel";
 import { api, type ChatTurn, type Source } from "./lib/api";
+import { installScrollbarHover } from "./lib/scrollbar";
 import type { MessageView } from "./components/Message";
 
 export interface Dialog {
@@ -12,14 +13,7 @@ export interface Dialog {
   messages: MessageView[];
 }
 
-type Health = "checking" | "ready" | "down";
 type Theme = "light" | "dark";
-
-const HEALTH_LABEL: Record<Health, string> = {
-  checking: "проверка сервиса…",
-  ready: "сервис готов",
-  down: "сервис недоступен",
-};
 
 const LIMITS = { historyMessages: 8, historyChars: 12000 };
 
@@ -64,7 +58,6 @@ function buildHistory(messages: MessageView[]): ChatTurn[] {
 }
 
 export default function App() {
-  const [health, setHealth] = useState<Health>("checking");
   const [source, setSource] = useState<Source | null>(null);
   const [theme, setTheme] = useState<Theme>(() => {
     const saved = localStorage.getItem("theme");
@@ -76,20 +69,16 @@ export default function App() {
   const [saved] = useState(loadSaved);
   const [dialogs, setDialogs] = useState<Dialog[]>(saved.dialogs);
   const [activeId, setActiveId] = useState(saved.activeId);
-  const [busy, setBusy] = useState(false);
+  const [busyIds, setBusyIds] = useState<number[]>([]);
+  const [dialogsOpen, setDialogsOpen] = useState(false);
+  const [pulseId, setPulseId] = useState<number | null>(null);
+  const [startPulse, setStartPulse] = useState(0);
   const nextDialogId = useRef(
     Math.max(...saved.dialogs.map((d) => d.id)) + 1
   );
   const nextMessageId = useRef(
     Math.max(0, ...saved.dialogs.flatMap((d) => d.messages.map((m) => m.id))) + 1
   );
-
-  useEffect(() => {
-    api
-      .health()
-      .then(() => setHealth("ready"))
-      .catch(() => setHealth("down"));
-  }, []);
 
   useEffect(() => {
     document.documentElement.dataset.colorScheme = theme;
@@ -100,6 +89,9 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ dialogs, activeId }));
   }, [dialogs, activeId]);
+
+  // полоса прокрутки расширяется при наведении на неё
+  useEffect(() => installScrollbarHover(), []);
 
   const activeDialog = dialogs.find((d) => d.id === activeId) ?? dialogs[0];
 
@@ -115,6 +107,21 @@ export default function App() {
   }
 
   function newDialog() {
+    if (activeDialog.messages.length === 0) {
+      // уже в новом (пустом) диалоге: просто проигрываем анимацию стартового
+      // состояния — как будто новый чат только что создался
+      setPulseId(activeDialog.id);
+      setStartPulse((n) => n + 1);
+      window.setTimeout(() => setPulseId(null), 500);
+      return;
+    }
+    // пустой диалог уже есть — переходим в него, чтобы не копить пустые
+    const empty = dialogs.find((d) => d.messages.length === 0);
+    if (empty) {
+      setActiveId(empty.id);
+      setSource(null);
+      return;
+    }
     const id = nextDialogId.current++;
     setDialogs((prev) => [
       { id, title: "Новый диалог", date: today(), messages: [] },
@@ -136,9 +143,10 @@ export default function App() {
 
   async function send(question: string) {
     const text = question.trim();
-    if (!text || busy) return;
+    if (!text) return;
 
     const dialogId = activeId;
+    if (busyIds.includes(dialogId)) return;
     const history = buildHistory(activeDialog.messages);
     pushMessage(dialogId, { role: "user", text });
     patchDialog(dialogId, (d) =>
@@ -146,7 +154,7 @@ export default function App() {
         ? d
         : { ...d, title: text.length > 46 ? text.slice(0, 46) + "…" : text }
     );
-    setBusy(true);
+    setBusyIds((prev) => [...prev, dialogId]);
 
     try {
       const result = await api.chat(text, history);
@@ -163,7 +171,7 @@ export default function App() {
         errorMessage: (err as Error).message,
       });
     } finally {
-      setBusy(false);
+      setBusyIds((prev) => prev.filter((id) => id !== dialogId));
     }
   }
 
@@ -183,14 +191,11 @@ export default function App() {
       <header className="topbar">
         <div className="brand">
           <div className="brand-mark">ЮА</div>
-          <div>
-            <h1>Юридический ассистент</h1>
-            <p>Поиск по базе документов · ответы с источниками</p>
-          </div>
+          <h1>Юридический ассистент</h1>
         </div>
         <div className="topbar-actions">
           <button type="button" className="new-dialog" onClick={newDialog}>
-            + Новый диалог
+            + Новый<span className="wide-label"> диалог</span>
           </button>
           <button
             type="button"
@@ -198,29 +203,42 @@ export default function App() {
             title="Сменить тему"
             onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
           >
-            {theme === "dark" ? "☀ Светлая" : "☾ Тёмная"}
+            {theme === "dark" ? "☀" : "☾"}
+            <span className="wide-label">
+              {theme === "dark" ? " Светлая" : " Тёмная"}
+            </span>
           </button>
-          <div className="status" title="Состояние сервиса">
-            <span className={`dot dot-${health}`} />
-            <span>{HEALTH_LABEL[health]}</span>
-          </div>
         </div>
       </header>
 
       <div className="layout">
-        <DialogsList
-          dialogs={dialogs}
-          activeId={activeId}
-          onClear={clearHistory}
-          onSelect={(id) => {
-            setActiveId(id);
-            setSource(null);
-          }}
-        />
+        <div className={"dialogs-wrap" + (dialogsOpen ? " open" : "")}>
+          <DialogsList
+            dialogs={dialogs}
+            activeId={activeId}
+            pulseId={pulseId}
+            onClear={clearHistory}
+            onClose={() => setDialogsOpen(false)}
+            onSelect={(id) => {
+              setActiveId(id);
+              setSource(null);
+              setDialogsOpen(false);
+            }}
+          />
+        </div>
         <div className="panel">
+          <button
+            type="button"
+            className="dialogs-tab"
+            onClick={() => setDialogsOpen(true)}
+          >
+            ☰ Диалоги
+          </button>
           <ChatPanel
+            key={activeDialog.id}
+            startPulse={startPulse}
+            busy={busyIds.includes(activeDialog.id)}
             messages={activeDialog.messages}
-            busy={busy}
             onSend={send}
             onRetry={retry}
             onOpenSource={setSource}

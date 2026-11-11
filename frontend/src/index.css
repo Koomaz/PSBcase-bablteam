@@ -33,6 +33,17 @@
   --warn-text: #92400e;
   --quote-bg: #f8fafc;
   --highlight: #fde68a;
+  --scroll-thumb: rgba(100, 116, 139, 0.4);
+  --scroll-thumb-hover: rgba(100, 116, 139, 0.55);
+  --t: 200ms;
+  --ease: cubic-bezier(0.4, 0, 0.2, 1);
+  --transition:
+    color var(--t) var(--ease),
+    background-color var(--t) var(--ease),
+    border-color var(--t) var(--ease),
+    box-shadow var(--t) var(--ease),
+    opacity var(--t) var(--ease),
+    transform var(--t) var(--ease);
   --shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
   --shadow-lift: 0 4px 10px rgba(15, 23, 42, 0.1);
 }
@@ -66,6 +77,8 @@
   --warn-text: #fcd34d;
   --quote-bg: #1a2436;
   --highlight: #7c5e10;
+  --scroll-thumb: rgba(148, 163, 184, 0.35);
+  --scroll-thumb-hover: rgba(148, 163, 184, 0.5);
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
   --shadow-lift: 0 4px 12px rgba(0, 0, 0, 0.4);
 }
@@ -79,20 +92,61 @@
 
 * { box-sizing: border-box; }
 
+/* полосы прокрутки: тонкая палочка 2px, толстеет при наведении.
+   Дорожка фиксированной ширины — контент не сдвигается при расширении. */
+
+@supports (-moz-appearance: none) {
+  /* Firefox */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--scroll-thumb) transparent;
+  }
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--scroll-thumb);
+  background-clip: padding-box;
+  border: 3px solid transparent;
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb:hover,
+:is(.messages, .dialog-list, .source-panel-body, .doc-modal-body).scroll-thick::-webkit-scrollbar-thumb {
+  background: var(--scroll-thumb-hover);
+  background-clip: padding-box;
+  border-width: 1px; /* палочка 6px внутри той же дорожки — контент не двигается */
+}
+
+html, body {
+  height: 100%;
+  overflow-x: hidden;
+}
+
 body {
   margin: 0;
   background: var(--page);
   color: var(--foreground);
   font-family: var(--font-sans);
+  overflow: hidden;
 }
 
 /* ---- оболочка приложения ---- */
 
 .page {
-  min-height: 100vh;
+  height: 100vh;
   display: flex;
   flex-direction: column;
   background: var(--page);
+  overflow: hidden;
 }
 
 .topbar {
@@ -117,12 +171,28 @@ body {
   min-height: 0;
 }
 
+.dialogs-wrap {
+  display: contents;
+}
+
 .panel {
   display: flex;
   flex-direction: column;
   flex: 1;
   min-width: 0;
+  min-height: 0;
   background: var(--surface);
+  position: relative;
+}
+
+/* ярлычок открытия диалогов — только в вертикальном режиме */
+
+.dialogs-tab {
+  display: none;
+}
+
+.dialogs-close {
+  display: none;
 }
 
 .brand {
@@ -149,31 +219,6 @@ body {
   color: var(--text);
 }
 
-.brand p {
-  margin: 2px 0 0;
-  font-size: 0.78rem;
-  color: var(--text-soft);
-}
-
-.status {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 0.8rem;
-  color: var(--text-soft);
-  white-space: nowrap;
-}
-
-.dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: var(--line);
-}
-
-.dot-ready { background: #16a34a; }
-.dot-down { background: #dc2626; }
-
 .theme-toggle {
   border: 1px solid var(--line);
   background: var(--surface);
@@ -183,7 +228,7 @@ body {
   font: inherit;
   font-size: 0.85rem;
   cursor: pointer;
-  transition: border-color 0.15s, color 0.15s;
+  transition: var(--transition);
 }
 
 .theme-toggle:hover {
@@ -226,7 +271,7 @@ body {
   padding: 4px 6px;
   border-radius: 8px;
   cursor: pointer;
-  transition: color 0.15s, background 0.15s;
+  transition: var(--transition);
 }
 
 .clear-history:hover {
@@ -236,6 +281,7 @@ body {
 
 .dialog-list {
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 4px 10px 16px;
   display: flex;
   flex-direction: column;
@@ -254,7 +300,7 @@ body {
   font: inherit;
   color: var(--text);
   cursor: pointer;
-  transition: background 0.15s, border-color 0.15s;
+  transition: var(--transition);
 }
 
 .dialog-item:hover { background: var(--surface-hover); }
@@ -262,6 +308,18 @@ body {
 .dialog-item.active {
   background: var(--accent-soft);
   border-color: var(--accent-soft-hover);
+}
+
+/* обратная связь при «создании» чата */
+
+@keyframes dialog-pop {
+  0% { transform: scale(0.96); opacity: 0.5; }
+  60% { transform: scale(1.015); }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+.dialog-item.pop {
+  animation: dialog-pop 0.35s ease-out;
 }
 
 .dialog-title {
@@ -295,7 +353,7 @@ body {
   font-size: 0.85rem;
   font-weight: 600;
   cursor: pointer;
-  transition: border-color 0.15s, color 0.15s;
+  transition: var(--transition);
 }
 
 .new-dialog:hover {
@@ -307,7 +365,9 @@ body {
 
 .messages {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 24px 16px 8px;
   display: flex;
   flex-direction: column;
@@ -319,6 +379,7 @@ body {
   max-width: 520px;
   text-align: center;
   color: var(--text-soft);
+  animation: rise-in 0.3s ease-out;
 }
 
 .empty h2 {
@@ -344,8 +405,12 @@ body {
   cursor: pointer;
   text-align: left;
   box-shadow: var(--shadow);
-  transition: border-color 0.15s, transform 0.15s, box-shadow 0.15s;
+  transition: var(--transition);
+  animation: rise-in 0.35s ease-out backwards;
 }
+
+.example:nth-child(2) { animation-delay: 70ms; }
+.example:nth-child(3) { animation-delay: 140ms; }
 
 .example:hover {
   border-color: var(--accent);
@@ -359,8 +424,59 @@ body {
   width: fit-content;
 }
 
-.msg-user { align-self: flex-end; }
-.msg-assistant { align-self: flex-start; }
+/* направленные анимации появления */
+
+@keyframes msg-in-right {
+  from { opacity: 0; transform: translateX(28px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes msg-in-left {
+  from { opacity: 0; transform: translateX(-28px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes drawer-in-right {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+
+@keyframes drawer-in-left {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(0); }
+}
+
+@keyframes rise-in {
+  from { opacity: 0; transform: translateY(28px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+.msg-user {
+  align-self: flex-end;
+  animation: msg-in-right 0.25s ease-out;
+}
+
+.msg-assistant {
+  align-self: flex-start;
+  animation: msg-in-left 0.25s ease-out;
+}
+
+.msg-error {
+  align-self: flex-start;
+  animation: msg-in-left 0.25s ease-out;
+}
 
 .bubble {
   border: 1px solid var(--line-soft);
@@ -416,7 +532,7 @@ body {
   border-radius: 6px;
   cursor: pointer;
   vertical-align: baseline;
-  transition: background 0.15s;
+  transition: var(--transition);
 }
 
 .cite:hover { background: var(--accent-soft-hover); }
@@ -445,7 +561,7 @@ body {
   font-size: 0.84rem;
   color: var(--text);
   cursor: pointer;
-  transition: border-color 0.15s;
+  transition: var(--transition);
 }
 
 .source-chip:hover { border-color: var(--accent); }
@@ -499,6 +615,7 @@ body {
   font: inherit;
   font-size: 0.86rem;
   cursor: pointer;
+  transition: var(--transition);
 }
 
 .retry:hover { background: var(--error-soft); }
@@ -523,8 +640,9 @@ body {
   background: var(--surface);
   color: var(--text);
   outline: none;
-  max-height: 160px;
-  transition: border-color 0.15s, box-shadow 0.15s;
+  max-height: calc(6 * 1.45em + 26px); /* максимум 6 строк, дальше внутренняя прокрутка */
+  overflow-y: auto;
+  transition: border-color var(--t) var(--ease), box-shadow var(--t) var(--ease);
 }
 
 .composer textarea:focus {
@@ -543,7 +661,7 @@ body {
   font-weight: 600;
   padding: 12px 22px;
   cursor: pointer;
-  transition: background 0.15s, opacity 0.15s;
+  transition: var(--transition);
 }
 
 .send:hover:not(:disabled) { background: var(--accent-hover); }
@@ -571,6 +689,7 @@ body {
   display: flex;
   flex-direction: column;
   z-index: 20;
+  animation: drawer-in-right 0.28s ease-out;
 }
 
 .source-panel-head {
@@ -596,12 +715,14 @@ body {
   cursor: pointer;
   padding: 4px 8px;
   border-radius: 8px;
+  transition: var(--transition);
 }
 
 .panel-close:hover { background: var(--surface-hover); color: var(--text); }
 
 .source-panel-body {
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 18px 20px 32px;
 }
 
@@ -673,7 +794,7 @@ body {
   font-size: 0.88rem;
   font-weight: 600;
   cursor: pointer;
-  transition: border-color 0.15s, color 0.15s;
+  transition: var(--transition);
 }
 
 .doc-open:hover {
@@ -690,6 +811,7 @@ body {
   justify-content: center;
   padding: 24px;
   z-index: 40;
+  animation: fade-in 0.2s ease-out;
 }
 
 .doc-modal-card {
@@ -702,6 +824,7 @@ body {
   border-radius: 16px;
   box-shadow: var(--shadow-lift);
   overflow: hidden;
+  animation: rise-in 0.28s ease-out;
 }
 
 .doc-modal-head {
@@ -720,11 +843,13 @@ body {
 
 .doc-modal-body {
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 18px 22px 28px;
 }
 
 .doc-text {
   white-space: pre-wrap;
+  overflow-wrap: break-word;
   line-height: 1.65;
   font-size: 0.94rem;
   color: var(--text);
@@ -739,10 +864,58 @@ body {
 }
 
 @media (max-width: 720px) {
-  .dialogs { display: none; }
+  /* компактная верхняя строка: только значки и короткие подписи */
+  .brand h1 { display: none; }
+  .wide-label { display: none; }
+
+  /* ярлычок «Диалоги» в левом верхнем углу окна чата */
+  .dialogs-tab {
+    display: block;
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    z-index: 5;
+    border: 1px solid var(--line);
+    background: var(--surface);
+    color: var(--text-soft);
+    border-radius: 10px;
+    padding: 6px 12px;
+    font: inherit;
+    font-size: 0.78rem;
+    cursor: pointer;
+    box-shadow: var(--shadow);
+    transition: var(--transition);
+  }
+
+  .dialogs-tab:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  /* выбор диалога — на всю область вместо чата */
+  .dialogs-wrap {
+    display: none;
+  }
+
+  .dialogs-wrap.open {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 30;
+    background: var(--surface);
+    animation: drawer-in-left 0.25s ease-out;
+  }
+
+  .dialogs-wrap.open .dialogs {
+    width: 100%;
+    height: 100%;
+    border-right: none;
+  }
+
+  .dialogs-close { display: block; }
+
   .topbar { padding: 12px 14px; }
-  .brand p { display: none; }
-  .messages { padding: 16px 10px 8px; }
+  .messages { padding: 52px 10px 8px; }
   .composer { padding: 10px 10px 4px; }
   .composer-hint { padding: 4px 12px 10px; }
 }
