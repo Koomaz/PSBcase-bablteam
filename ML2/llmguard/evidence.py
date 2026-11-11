@@ -65,6 +65,11 @@ def parse_question(raw: str) -> tuple[str, list[dict[str, str]]]:
             last_user = turn["content"].strip()
             break
 
+    # Текущий ход не должен попадать в историю: иначе поиск принимает его
+    # за предыдущий контекст и теряет договор из более ранней реплики.
+    if history and history[-1]["role"] == "user" and history[-1]["content"].strip() == last_user:
+        history = history[:-1]
+
     return last_user, history
 
 

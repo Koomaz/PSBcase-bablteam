@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import threading
 import time
@@ -31,6 +32,12 @@ from ML2.llmguard.csvio import find_questions_file, read_questions, write_submis
 from ML2.llmguard.evidence import build_evidence, parse_question, premise_warnings, summarize_diagnostics
 from ML2.llmguard.prompt_builder import build_messages, build_repair_message, load_system_prompt
 from ML2.llmguard.validator import ensure_premise_ack, fallback_refusal, validate
+
+
+ATTRIBUTED_NUMBER = re.compile(
+    r"(?:по|в|согласно|на основании|в силу)\s+(?:п\.?|пункт\w*|договор\w*|регламент\w*|соглашени\w*|положени\w*)",
+    re.I,
+)
 
 
 def _import_retriever():
@@ -141,13 +148,15 @@ class LegalAssistant:
             chunks, max_items=self.max_evidence, max_neighbors=self.max_neighbors
         )
         warnings = premise_warnings(question, items)
-        # Автоматическую преамбулу ставим только по числам: у названий есть падежи,
-        # и ложное «посылка не подтверждается» хуже, чем отсутствие фразы.
+        # Автоматическую преамбулу ставим только по числам и только когда вопрос
+        # приписывает величину нашему документу. Сумма новой сделки (12 млн) —
+        # обстоятельство пользователя, а не ложная посылка о документе.
+        attributed = bool(ATTRIBUTED_NUMBER.search(question))
         conflicts = [
             w.split("«")[1].split("»")[0]
             for w in warnings
             if w.startswith("число") and "«" in w and "»" in w
-        ]
+        ] if attributed else []
         diag_note = summarize_diagnostics(diagnostics)
 
         messages = build_messages(
@@ -199,8 +208,12 @@ class LegalAssistant:
 
         if result.ok:
             text = result.cleaned
+        elif result.critical:
+            # Неподтверждённый факт нельзя отдавать в CSV: выдумка обнуляет вопрос.
+            # Вместо него — подтверждённая выдержка из того источника, на который ссылались.
+            text = fallback_refusal(items, prefer=result.citations[0] if result.citations else None)
         elif result.citations and result.words >= 4:
-            text = result.cleaned  # частично годный ответ лучше заглушки
+            text = result.cleaned  # стилевые замечания не мешают ответу
         else:
             text = fallback_refusal(items)
 

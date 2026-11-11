@@ -63,7 +63,8 @@ class TestQuestionParsing(unittest.TestCase):
         )
         question, history = parse_question(raw)
         self.assertEqual(question, "А за сколько дней проверить качество?")
-        self.assertEqual([turn["role"] for turn in history], ["user", "assistant", "user"])
+        # Текущий ход в историю не попадает — иначе поиск принимает его за предыдущий.
+        self.assertEqual([turn["role"] for turn in history], ["user", "assistant"])
 
     def test_dialog_without_final_user_line(self):
         raw = "Пользователь: Вопрос один\nАссистент: Ответ один"

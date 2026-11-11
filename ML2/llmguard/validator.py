@@ -42,6 +42,7 @@ REFUSAL_TEMPLATE_HINT = (
 class ValidationResult:
     ok: bool
     issues: list[str] = field(default_factory=list)
+    critical: list[str] = field(default_factory=list)
     cleaned: str = ""
     words: int = 0
     citations: list[str] = field(default_factory=list)
@@ -52,12 +53,26 @@ class ValidationResult:
         return bool(self.cleaned)
 
 
+UNIT_HINT = re.compile(r"%|₽|руб|процент|дн|дней|мес|год|лет|недел|час|рабоч", re.I)
+UNIT_NUMBER = re.compile(
+    r"\d[\d\s\u00a0]*(?:[.,]\d+)?\s*(?:\w+\s+){0,2}(?:%|₽|руб\w*|процент\w*|дн\w*|мес\w*|год\w*|лет|недел\w*|час\w*)",
+    re.I,
+)
+
+
+def _normalize_number(raw: str) -> str:
+    return re.sub(r"\D", "", raw).lstrip("0") or "0"
+
+
 def _numbers(text: str) -> set[str]:
+    """Числа с единицей измерения (5 дней, 0,1%, 24 месяца) и любые числа из 3+ цифр."""
     out: set[str] = set()
     for match in NUM_RE.finditer(text):
-        digits = re.sub(r"\D", "", match.group(0))
-        if len(digits) >= 3:
-            out.add(digits.lstrip("0") or "0")
+        digits = _normalize_number(match.group(0))
+        if len(digits) >= 3 or UNIT_HINT.search(match.group(0)):
+            out.add(digits)
+    for match in UNIT_NUMBER.finditer(text):
+        out.add(_normalize_number(match.group(0)))
     return out
 
 
@@ -71,6 +86,38 @@ def question_parts(question: str) -> int:
     parts += len(re.findall(r",?\s+и\s+(?=до|как|кто|что|когда|какой|какую|какие|сколько|где|зачем|почему|можно|нужно|обязан)", text, re.I))
     parts += len(re.findall(r"\?", text)) - 1 if text.count("?") > 1 else 0
     return max(1, min(parts, 4))
+
+
+def _attribution_problems(cleaned: str, items: Sequence[dict[str, Any]], question: str) -> list[str]:
+    """Число должно подтверждаться тем фрагментом, на который стоит ссылка.
+
+    Число из вопроса допустимо только в предложении, где расхождение называется:
+    иначе «500 000» из вопроса проходило бы при источнике с 450 000.
+    """
+    texts = {item["eid"]: item.get("text", "") for item in items}
+    question_numbers = _numbers(question or "")
+    problems: list[str] = []
+    seen: set[str] = set()
+
+    for sentence in re.split(r"(?<=[.!?])\s+", cleaned):
+        cites = [f"E{number}" for number in CITE_RE.findall(sentence)]
+        if not cites:
+            continue
+        cited_numbers: set[str] = set()
+        for eid in cites:
+            cited_numbers |= _numbers(texts.get(eid, ""))
+        refuting = any(marker in sentence.lower() for marker in DISCREPANCY_MARKERS)
+        for number in sorted(_numbers(sentence) - cited_numbers):
+            if refuting and number in question_numbers:
+                continue
+            key = f"{number}:{','.join(cites)}"
+            if key in seen:
+                continue
+            seen.add(key)
+            problems.append(
+                f"число {number} не подтверждено цитируемым источником {', '.join(cites)} (возможная выдумка)"
+            )
+    return problems
 
 
 def clean_text(answer: str) -> str:
@@ -96,6 +143,13 @@ def validate(
 ) -> ValidationResult:
     cleaned = clean_text(answer)
     issues: list[str] = []
+    critical: list[str] = []
+
+    def flag(message: str, *, severe: bool = False) -> None:
+        issues.append(message)
+        if severe:
+            critical.append(message)
+
     valid_ids = {item["eid"] for item in items}
     valid_numbers = _numbers(" ".join(item.get("text", "") for item in items))
     # Число из вопроса можно повторить, чтобы опровергнуть ложную посылку.
@@ -106,9 +160,10 @@ def validate(
     unknown = sorted({eid for eid in raw_ids if eid not in valid_ids})
     citations = [eid for eid in raw_ids if eid in valid_ids]
     if unknown:
-        issues.append(
+        flag(
             "ссылки " + ", ".join(unknown) + " отсутствуют в списке доказательств; "
-            "цитировать можно только " + (", ".join(sorted(valid_ids)) or "ничего")
+            "цитировать можно только " + (", ".join(sorted(valid_ids)) or "ничего"),
+            severe=True,
         )
         for eid in unknown:
             cleaned = re.sub(r"\[\s*[EЕ]\s*%s\s*\]" % eid[1:], "", cleaned)
@@ -128,9 +183,10 @@ def validate(
     else:
         without_cites = re.sub(r"(?:\s*\[[EЕ]\d+\])+\s*$", "", cleaned).strip()
         if without_cites and without_cites[-1] not in ".!?)]»":
-            issues.append(
+            flag(
                 "ответ обрывается на середине: нет завершающей точки "
-                "(вероятно, упёрлись в лимит токенов)"
+                "(вероятно, упёрлись в лимит токенов)",
+                severe=True,
             )
         if words < min_words and not citations:
             issues.append(f"ответ слишком короткий ({words} слов)")
@@ -141,30 +197,29 @@ def validate(
                     f"вопрос содержит {parts} части, а ответ — {words} слов: похоже, "
                     "часть вопроса осталась без ответа"
                 )
-            else:
-                issues.append(
-                    f"ответ слишком короткий для целевого объёма ({words} слов): "
-                    "нужен развёрнутый ответ с основанием и ссылкой"
-                )
+            # Одиночный короткий ответ («гарантия — 24 месяца [E2]») корректен:
+            # длину проверяем только у составных вопросов, где часть может выпасть.
         elif words > max_words:
             issues.append(f"ответ длиннее лимита: {words} слов при пределе {max_words}")
 
     if items and is_refusal and not citations:
-        issues.append(
+        flag(
             "похоже на необоснованный отказ: в доказательствах есть релевантные фрагменты, "
-            "но ответ не содержит ни одной ссылки"
+            "но ответ не содержит ни одной ссылки",
+            severe=True,
         )
     if items and not is_refusal and not citations:
-        issues.append("в ответе нет ни одной ссылки [En] на доказательства")
+        flag("в ответе нет ни одной ссылки [En] на доказательства", severe=True)
     if not items and not is_refusal:
-        issues.append("доказательств нет, а ответ не сообщает об отсутствии данных")
+        flag("доказательств нет, а ответ не сообщает об отсутствии данных", severe=True)
 
     if is_refusal and not re.search(r"отсутству|не\s+найден|нет\s+сведен|не\s+раскрыт|нужен|требуется", cleaned, re.I):
         issues.append("отказ не объясняет, чего именно не хватает: " + REFUSAL_TEMPLATE_HINT)
 
     if check_numbers and items:
-        for number in sorted(_numbers(cleaned) - valid_numbers):
-            issues.append(f"число {number} отсутствует в доказательствах (возможная выдумка)")
+        problems = _attribution_problems(cleaned, items, question)
+        for problem in problems:
+            flag(problem, severe=True)
 
     for pattern, message in FORBIDDEN_PATTERNS:
         if pattern.search(cleaned):
@@ -176,6 +231,7 @@ def validate(
     return ValidationResult(
         ok=not issues,
         issues=issues,
+        critical=critical,
         cleaned=cleaned,
         words=words,
         citations=citations,
@@ -206,17 +262,18 @@ def ensure_premise_ack(text: str, conflicts: Sequence[str], max_words: int = 180
     return (prefix + text).replace("  ", " ").strip()
 
 
-def fallback_refusal(items: Sequence[dict[str, Any]]) -> str:
+def fallback_refusal(items: Sequence[dict[str, Any]], prefer: str | None = None) -> str:
     """Гарантированный детерминированный ответ, если модель не справилась за два прохода."""
     if not items:
         return (
             "В предоставленных документах ответа нет: отсутствуют релевантные положения. "
             "Для ответа нужен документ, регулирующий этот вопрос."
         )
-    excerpt = re.sub(r"\s+", " ", items[0].get("text", "")).strip()
+    chosen = next((item for item in items if item.get("eid") == prefer), items[0])
+    excerpt = re.sub(r"\s+", " ", chosen.get("text", "")).strip()
     excerpt = excerpt[:300].rsplit(" ", 1)[0] if len(excerpt) > 300 else excerpt
     return (
-        f"По этому вопросу в документах есть только следующее: {excerpt} [E1]. "
+        f"По этому вопросу в документах есть только следующее: {excerpt} [{chosen.get('eid', 'E1')}]. "
         "Остальные условия в предоставленных материалах не раскрыты — уточните вопрос "
         "или запросите недостающий документ."
     )
