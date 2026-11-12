@@ -1,0 +1,187 @@
+{
+  "summary": {
+    "macro_coverage": 0.7833333333333333,
+    "complete": 5,
+    "positive": 10,
+    "negative_pass": 4,
+    "negative": 4,
+    "max_chars": 4734,
+    "median_ms": 10.208400010014884
+  },
+  "cases": [
+    {
+      "id": "h01",
+      "coverage": [
+        true,
+        true
+      ],
+      "negative_pass": null,
+      "chars": 3973,
+      "items": 7,
+      "packet_count": 5,
+      "route": "baseline",
+      "ms": 23.78590000444092
+    },
+    {
+      "id": "h02",
+      "coverage": [
+        true,
+        true
+      ],
+      "negative_pass": null,
+      "chars": 3711,
+      "items": 7,
+      "packet_count": 5,
+      "route": "baseline",
+      "ms": 10.37130001350306
+    },
+    {
+      "id": "h03",
+      "coverage": [
+        false,
+        false,
+        true
+      ],
+      "negative_pass": null,
+      "chars": 2933,
+      "items": 5,
+      "packet_count": 5,
+      "route": "baseline",
+      "ms": 15.252600001986139
+    },
+    {
+      "id": "h04",
+      "coverage": [
+        true,
+        false,
+        true
+      ],
+      "negative_pass": null,
+      "chars": 4734,
+      "items": 8,
+      "packet_count": 5,
+      "route": "baseline",
+      "ms": 13.227500006905757
+    },
+    {
+      "id": "h05",
+      "coverage": [
+        true,
+        true,
+        false
+      ],
+      "negative_pass": null,
+      "chars": 2403,
+      "items": 5,
+      "packet_count": 5,
+      "route": "baseline",
+      "ms": 11.406599995098077
+    },
+    {
+      "id": "h06",
+      "coverage": [
+        false,
+        true,
+        true
+      ],
+      "negative_pass": null,
+      "chars": 4139,
+      "items": 7,
+      "packet_count": 5,
+      "route": "baseline",
+      "ms": 9.83119999000337
+    },
+    {
+      "id": "h07",
+      "coverage": [
+        true,
+        true
+      ],
+      "negative_pass": null,
+      "chars": 4344,
+      "items": 7,
+      "packet_count": 5,
+      "route": "baseline",
+      "ms": 12.002499992377125
+    },
+    {
+      "id": "h08",
+      "coverage": [
+        true,
+        true
+      ],
+      "negative_pass": null,
+      "chars": 2269,
+      "items": 5,
+      "packet_count": 5,
+      "route": "baseline",
+      "ms": 10.045500006526709
+    },
+    {
+      "id": "h09",
+      "coverage": [
+        false,
+        true
+      ],
+      "negative_pass": null,
+      "chars": 3174,
+      "items": 6,
+      "packet_count": 5,
+      "route": "baseline",
+      "ms": 10.616399988066405
+    },
+    {
+      "id": "h10",
+      "coverage": [
+        true,
+        true
+      ],
+      "negative_pass": null,
+      "chars": 4212,
+      "items": 7,
+      "packet_count": 5,
+      "route": "baseline",
+      "ms": 8.047499999520369
+    },
+    {
+      "id": "h11",
+      "coverage": [],
+      "negative_pass": true,
+      "chars": 60,
+      "items": 0,
+      "packet_count": 0,
+      "route": "baseline",
+      "ms": 6.7522000026656315
+    },
+    {
+      "id": "h12",
+      "coverage": [],
+      "negative_pass": true,
+      "chars": 60,
+      "items": 0,
+      "packet_count": 0,
+      "route": "baseline",
+      "ms": 5.436999999801628
+    },
+    {
+      "id": "h13",
+      "coverage": [],
+      "negative_pass": true,
+      "chars": 60,
+      "items": 0,
+      "packet_count": 0,
+      "route": "baseline",
+      "ms": 3.2574000069871545
+    },
+    {
+      "id": "h14",
+      "coverage": [],
+      "negative_pass": true,
+      "chars": 60,
+      "items": 0,
+      "packet_count": 0,
+      "route": "baseline",
+      "ms": 0.6873999955132604
+    }
+  ]
+}

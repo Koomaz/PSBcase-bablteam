@@ -1,0 +1,339 @@
+{
+  "summary": {
+    "macro_coverage": 1.0,
+    "complete": 24,
+    "positive": 24,
+    "negative_pass": 0,
+    "negative": 0,
+    "max_chars": 6947,
+    "median_ms": 17.298650003795046
+  },
+  "cases": [
+    {
+      "id": "lease_list",
+      "coverage": [
+        true,
+        true,
+        true,
+        true
+      ],
+      "negative_pass": null,
+      "chars": 4429,
+      "items": 17,
+      "packet_count": 17,
+      "route": "short_contract",
+      "ms": 20.490099996095523
+    },
+    {
+      "id": "lease_exit",
+      "coverage": [
+        true,
+        true
+      ],
+      "negative_pass": null,
+      "chars": 4785,
+      "items": 18,
+      "packet_count": 18,
+      "route": "short_contract",
+      "ms": 18.14129999547731
+    },
+    {
+      "id": "lease_access",
+      "coverage": [
+        true,
+        true
+      ],
+      "negative_pass": null,
+      "chars": 4429,
+      "items": 17,
+      "packet_count": 17,
+      "route": "short_contract",
+      "ms": 13.579899998148903
+    },
+    {
+      "id": "lease_security",
+      "coverage": [
+        true,
+        true
+      ],
+      "negative_pass": null,
+      "chars": 4429,
+      "items": 17,
+      "packet_count": 17,
+      "route": "short_contract",
+      "ms": 13.016099997912534
+    },
+    {
+      "id": "lease_return",
+      "coverage": [
+        true
+      ],
+      "negative_pass": null,
+      "chars": 4429,
+      "items": 17,
+      "packet_count": 17,
+      "route": "short_contract",
+      "ms": 12.339900000370108
+    },
+    {
+      "id": "supply_four",
+      "coverage": [
+        true,
+        true,
+        true,
+        true
+      ],
+      "negative_pass": null,
+      "chars": 6517,
+      "items": 23,
+      "packet_count": 24,
+      "route": "short_contract",
+      "ms": 18.190500006312504
+    },
+    {
+      "id": "supply_cap",
+      "coverage": [
+        true,
+        true,
+        true
+      ],
+      "negative_pass": null,
+      "chars": 6517,
+      "items": 23,
+      "packet_count": 24,
+      "route": "short_contract",
+      "ms": 19.963900005677715
+    },
+    {
+      "id": "supply_force",
+      "coverage": [
+        true,
+        true
+      ],
+      "negative_pass": null,
+      "chars": 6517,
+      "items": 23,
+      "packet_count": 24,
+      "route": "short_contract+short_addendum",
+      "ms": 16.529200001969002
+    },
+    {
+      "id": "supply_claim",
+      "coverage": [
+        true,
+        true,
+        true
+      ],
+      "negative_pass": null,
+      "chars": 6517,
+      "items": 23,
+      "packet_count": 24,
+      "route": "short_contract",
+      "ms": 25.12580000620801
+    },
+    {
+      "id": "supply_trigger",
+      "coverage": [
+        true,
+        true
+      ],
+      "negative_pass": null,
+      "chars": 6517,
+      "items": 23,
+      "packet_count": 24,
+      "route": "short_contract",
+      "ms": 18.372399994404987
+    },
+    {
+      "id": "supply_address_boundary",
+      "coverage": [
+        true,
+        true
+      ],
+      "negative_pass": null,
+      "chars": 6788,
+      "items": 20,
+      "packet_count": 24,
+      "route": "short_contract+short_addendum",
+      "ms": 16.682900008163415
+    },
+    {
+      "id": "supply_address_after",
+      "coverage": [
+        true,
+        true
+      ],
+      "negative_pass": null,
+      "chars": 6830,
+      "items": 20,
+      "packet_count": 24,
+      "route": "short_contract+short_addendum",
+      "ms": 17.680799996014684
+    },
+    {
+      "id": "tech_list",
+      "coverage": [
+        true,
+        true,
+        true,
+        true
+      ],
+      "negative_pass": null,
+      "chars": 4117,
+      "items": 15,
+      "packet_count": 15,
+      "route": "short_contract",
+      "ms": 13.414600005489774
+    },
+    {
+      "id": "tech_warranty",
+      "coverage": [
+        true,
+        true
+      ],
+      "negative_pass": null,
+      "chars": 4117,
+      "items": 15,
+      "packet_count": 15,
+      "route": "short_contract",
+      "ms": 17.274099998758174
+    },
+    {
+      "id": "tech_request",
+      "coverage": [
+        true,
+        true
+      ],
+      "negative_pass": null,
+      "chars": 4117,
+      "items": 15,
+      "packet_count": 15,
+      "route": "short_contract",
+      "ms": 16.754099997342564
+    },
+    {
+      "id": "reg_types",
+      "coverage": [
+        true,
+        true,
+        true
+      ],
+      "negative_pass": null,
+      "chars": 6754,
+      "items": 19,
+      "packet_count": 19,
+      "route": "short_regulation",
+      "ms": 17.072500006179325
+    },
+    {
+      "id": "reg_template",
+      "coverage": [
+        true,
+        true
+      ],
+      "negative_pass": null,
+      "chars": 6947,
+      "items": 23,
+      "packet_count": 24,
+      "route": "short_regulation+short_letter",
+      "ms": 17.32320000883192
+    },
+    {
+      "id": "reg_history",
+      "coverage": [
+        true,
+        true,
+        true,
+        true
+      ],
+      "negative_pass": null,
+      "chars": 3325,
+      "items": 11,
+      "packet_count": 11,
+      "route": "short_regulation",
+      "ms": 29.55669999937527
+    },
+    {
+      "id": "reg_current",
+      "coverage": [
+        true,
+        true,
+        true,
+        true
+      ],
+      "negative_pass": null,
+      "chars": 4484,
+      "items": 16,
+      "packet_count": 16,
+      "route": "short_regulation",
+      "ms": 25.37089999532327
+    },
+    {
+      "id": "foreign",
+      "coverage": [
+        true,
+        true,
+        true
+      ],
+      "negative_pass": null,
+      "chars": 6608,
+      "items": 22,
+      "packet_count": 22,
+      "route": "short_letter+short_regulation",
+      "ms": 32.156200002646074
+    },
+    {
+      "id": "archive",
+      "coverage": [
+        true,
+        true,
+        true
+      ],
+      "negative_pass": null,
+      "chars": 6796,
+      "items": 18,
+      "packet_count": 24,
+      "route": "short_memo+short_law",
+      "ms": 30.67659999942407
+    },
+    {
+      "id": "law_penalty",
+      "coverage": [
+        true,
+        true
+      ],
+      "negative_pass": null,
+      "chars": 5213,
+      "items": 16,
+      "packet_count": 16,
+      "route": "article_conditions+short_law",
+      "ms": 16.142399996169843
+    },
+    {
+      "id": "law_probation",
+      "coverage": [
+        true,
+        true
+      ],
+      "negative_pass": null,
+      "chars": 4639,
+      "items": 15,
+      "packet_count": 15,
+      "route": "short_law",
+      "ms": 16.315600005327724
+    },
+    {
+      "id": "law_overtime",
+      "coverage": [
+        true,
+        true
+      ],
+      "negative_pass": null,
+      "chars": 3380,
+      "items": 7,
+      "packet_count": 7,
+      "route": "ranked_with_parents",
+      "ms": 11.52400000137277
+    }
+  ]
+}

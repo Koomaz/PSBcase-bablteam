@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import json
 from datetime import date
 from pathlib import Path
 from typing import Any, Sequence
@@ -68,6 +69,23 @@ def _render_item(index: int, item: dict[str, Any]) -> str:
 def render_evidence(items: Sequence[dict[str, Any]]) -> str:
     if not items:
         return "(пусто — в базе не найдено ни одного релевантного фрагмента)"
+    if any(item.get("compact") for item in items):
+        document_keys = ("doc_id", "doc_title", "doc_type", "doc_number", "doc_date", "edition_date",
+                         "effective_date", "validity_period", "snapshot_date", "version_status",
+                         "parent_doc_id", "parent_doc_number", "counterparties", "law_code")
+        blocks, seen = [], set()
+        for item in items:
+            meta = item.get("meta") or {}
+            doc = meta.get("doc_id") or item.get("source")
+            if doc not in seen:
+                blocks.append("DOCUMENT " + json.dumps({k: meta[k] for k in document_keys if k in meta},
+                                                       ensure_ascii=False, separators=(",", ":")))
+                seen.add(doc)
+            fields = {k: v for k, v in meta.items() if k not in document_keys and k != "section"}
+            blocks.append(f"[{item['eid']}] doc={doc}\nmetadata: " +
+                          json.dumps(fields, ensure_ascii=False, separators=(",", ":")) +
+                          "\ntext: " + item.get("text", "").strip())
+        return "\n\n".join(blocks)
     blocks = []
     for index, item in enumerate(items, start=1):
         eid = item.get("eid") or f"E{index}"
@@ -118,8 +136,9 @@ def build_repair_message(issues: Sequence[str]) -> dict[str, str]:
         )
     if "нет ни одной ссылки" in joined or "необоснованный отказ" in joined:
         hints.append(
-            "В доказательствах есть ответ: отвечай по ним и ставь [En] после каждого утверждения. "
-            "Отказ допустим только при полностью пустом <evidence>."
+            "Проверь достаточность доказательств для каждой части вопроса. "
+            "Подтверждённые тезисы снабди [En]; близкая тема сама по себе не доказывает ответ. "
+            "Если нужной нормы нет, назови конкретный пробел, даже при непустом <evidence>."
         )
     if "обрывается" in joined:
         hints.append("Уложи ответ в 2–4 законченных предложения, последнее должно заканчиваться точкой.")

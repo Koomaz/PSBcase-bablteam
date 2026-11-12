@@ -48,6 +48,15 @@ def verify(zip_path: Path, questions: Path, knowledge_base: Path) -> None:
                 body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
                 assert body["model"] == "local-model"
                 messages = body["messages"]
+                if any("Проверь черновик" in message["content"] for message in messages):
+                    requests.append(("semantic-review", False))
+                    raw = json.dumps({"choices": [{"message": {"content": json.dumps({"verdict": "ok"})}, "finish_reason": "stop"}]}).encode()
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(raw)))
+                    self.end_headers()
+                    self.wfile.write(raw)
+                    return
                 content = next(message["content"] for message in messages if message["content"].startswith("<evidence>"))
                 question = re.search(r"<question>(.*?)</question>", content, re.S)[1].strip()
                 context = re.search(r"<user_context>(.*?)</user_context>", content, re.S)[1].strip()
@@ -127,7 +136,8 @@ def verify(zip_path: Path, questions: Path, knowledge_base: Path) -> None:
         assert len(expected) == len(set(expected)) == 18
         assert all(set(row) == {"id", "answer"} and 0 < len(row["answer"]) <= 10_000 for row in rows)
         generated = [row for row in rows if "Источники:" in row["answer"]]
-        assert generated and len(requests) >= 18
+        assert generated and len(requests) >= 17
+        assert any(question == "semantic-review" for question, _ in requests)
         assert all('"проверка"' in row["answer"] and "Источники:" in row["answer"] for row in generated)
         assert len({question for question, history in requests if history}) == 5
         assert all(not question.startswith("Пользователь:") for question, _ in requests)

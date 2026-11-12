@@ -97,6 +97,13 @@ PROMPT = """Проверь черновик ответа на юридическ
    стоит? Если ссылка подтверждает не это утверждение — укажи.
 
 Правила:
+- Для каждого тезиса проверь субъект, действие, модальность (вправе/обязан), отрицание,
+  начальное событие срока, величину, предел, исключения и применимость редакции.
+- Непустой evidence не означает наличие ответа. Различай достаточное, частичное,
+  только тематически близкое и противоречивое основание. Обоснованный отказ допустим.
+- Утверждение без ссылки тоже проверяй. Отказ не должен утверждать отсутствие нормы
+  во всей базе, если проверены только фрагменты. Обстоятельства пользователя — условия
+  задачи, а не доказательства содержания документа.
 - Не предлагай добавлять внешние знания, законы или нормы, которых нет в evidence.
 - Не требуй дословного совпадения с evidence.
 - В drop и unsupported копируй ТОЧНУЮ фразу из <draft> (одно предложение или его часть),
@@ -104,7 +111,7 @@ PROMPT = """Проверь черновик ответа на юридическ
 - Если всё в порядке, верни пустые списки и verdict "ok".
 
 Верни строго один JSON-объект без markdown:
-{{"verdict": "ok" или "revise", "drop": ["точная фраза из draft, не нужная для ответа"], "unsupported": ["точная фраза из draft без опоры на evidence"], "missing": ["какой обязательный элемент пропущен"], "wrong_refs": ["точная фраза, где ссылка не подтверждает утверждение"], "reason": "одно предложение"}}
+{{"verdict": "ok" или "revise", "answerability": "sufficient|partial|related_only|contradictory", "claims": [{{"claim": "точный тезис из draft", "evidence_ids": ["E1"], "status": "supported|unsupported|wrong_reference"}}], "drop": [], "unsupported": [], "missing": [], "wrong_refs": [], "reason": "одно предложение"}}
 """
 
 
@@ -117,6 +124,7 @@ class Review:
     wrong_refs: list[str] = field(default_factory=list)
     reason: str = ""
     skipped: bool = False
+    answerability: str = "unknown"
 
     @property
     def noise(self) -> list[str]:
@@ -181,6 +189,27 @@ def review_answer(
             max_tokens=max_tokens,
         )
         data = _parse_json(raw)
+        if not isinstance(data, dict) or data.get("verdict") not in ("ok", "revise"):
+            raise ValueError("invalid_review_schema")
+        if "answerability" in data and data["answerability"] not in ("sufficient", "partial", "related_only", "contradictory"):
+            raise ValueError("invalid_answerability")
+        for key in ("missing", "drop", "noise", "unsupported", "wrong_refs"):
+            if key in data and (not isinstance(data[key], list) or not all(isinstance(x, str) for x in data[key])):
+                raise ValueError("invalid_review_list")
+        if "claims" in data:
+            if not isinstance(data["claims"], list):
+                raise ValueError("invalid_claims")
+            for claim in data["claims"]:
+                if not isinstance(claim, dict) or not isinstance(claim.get("claim"), str):
+                    raise ValueError("invalid_claim")
+                if claim.get("status") not in ("supported", "unsupported", "wrong_reference"):
+                    raise ValueError("invalid_claim_status")
+                ids = claim.get("evidence_ids")
+                if not isinstance(ids, list) or any(eid not in {i["eid"] for i in items} for eid in ids):
+                    raise ValueError("invalid_claim_citation")
+                if claim["status"] != "supported":
+                    key = "wrong_refs" if claim["status"] == "wrong_reference" else "unsupported"
+                    data.setdefault(key, []).append(claim["claim"])
     except Exception:  # редактор не должен ронять прогон
         return Review(skipped=True)
 
@@ -190,6 +219,7 @@ def review_answer(
         unsupported=_as_list(data.get("unsupported")),
         wrong_refs=_as_list(data.get("wrong_refs")),
         reason=str(data.get("reason") or "")[:400],
+        answerability=data.get("answerability", "unknown"),
     )
     verdict = str(data.get("verdict") or "").strip().lower()
     review.ok = not review.issues and verdict in ("", "ok", "accept", "pass")
@@ -229,7 +259,8 @@ def prune_reviewed_answer(draft: str, review: Review) -> str:
         if not any(_sentence_contains(sentence, phrase) for phrase in phrases)
     ]
     if not kept or not any(len(_word_key(sentence)) >= 12 for sentence in kept):
-        return text
+        # A negative factual verdict must never restore the rejected draft.
+        return "" if review.unsupported or review.wrong_refs else text
     return " ".join(kept)
 
 

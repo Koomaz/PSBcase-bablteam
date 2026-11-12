@@ -6,12 +6,14 @@ import re
 from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any, Sequence
+from .textutil import split_sentences
 
 CITE_RE = re.compile(r"\[\s*(?:E|Е)\s*(\d{1,2})\s*\]")
 WORD_RE = re.compile(r"[A-Za-zА-Яа-яЁё0-9]+(?:[-'][A-Za-zА-Яа-яЁё0-9]+)*")
 NUM_RE = re.compile(r"\d[\d\s\u00a0]*(?:[.,]\d+)?\s*(?:%|₽|руб\.?|рублей|дн\.?|дней|месяц\w*|год\w*|лет)?")
 
 REFUSAL_MARKERS = (
+    "не удалось подтвердить",
     "ответа нет", "не найдено", "отсутствует", "не содержится", "не раскрыт",
     "нет сведений", "не указано", "не предусмотрено", "сведений нет",
     "в документах нет", "не относится", "вне рамок",
@@ -262,24 +264,10 @@ def validate(
             )
         if words < min_words and not citations:
             issues.append(f"ответ слишком короткий ({words} слов)")
-        elif not is_refusal and words < 18 and question:
-            parts = question_parts(question)
-            if parts > 1:
-                issues.append(
-                    f"вопрос содержит {parts} части, а ответ — {words} слов: похоже, "
-                    "часть вопроса осталась без ответа"
-                )
-            # Одиночный короткий ответ («гарантия — 24 месяца [E2]») корректен:
-            # длину проверяем только у составных вопросов, где часть может выпасть.
         elif words > max_words:
             issues.append(f"ответ длиннее лимита: {words} слов при пределе {max_words}")
 
-    if items and is_refusal and not citations:
-        flag(
-            "похоже на необоснованный отказ: в доказательствах есть релевантные фрагменты, "
-            "но ответ не содержит ни одной ссылки",
-            severe=True,
-        )
+    # Relevance/answerability is a semantic decision, not bool(items).
     if items and not is_refusal and not citations:
         flag("в ответе нет ни одной ссылки [En] на доказательства", severe=True)
     if not items and not is_refusal:
@@ -292,6 +280,13 @@ def validate(
         problems = _attribution_problems(cleaned, items, question)
         for problem in problems:
             flag(problem, severe=True)
+
+    for sentence in split_sentences(cleaned):
+        if not CITE_RE.search(sentence) and len(WORD_RE.findall(sentence)) >= 5:
+            gap = re.search(r"не удалось подтвердить|не хватает|недостаточ|не подтвержда|"
+                            r"не представлен|не раскрыт|отсутств|нет|нужен|нужны|требуется|уточнит", sentence, re.I)
+            if not gap and items:
+                flag("утверждение без отдельной ссылки на доказательство", severe=True)
 
     for pattern, message in FORBIDDEN_PATTERNS:
         if pattern.search(cleaned):

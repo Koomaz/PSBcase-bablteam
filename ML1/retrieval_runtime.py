@@ -1438,6 +1438,99 @@ class Retriever:
         """Return the indexed source in original order, with no query or network call."""
         return [self._result(i, None, 0.0, {}) for i in self._rows_by_doc.get(doc_id, ())]
 
+    def evidence_packet(self, query: str, hits: list[RetrievedChunk], diagnostics: dict,
+                        history: list | None = None) -> tuple[list[RetrievedChunk], dict]:
+        """Expand only verified source rows; preserve event dates and citation identity.
+
+        Short documents are cheap enough to carry their conditions and exceptions.
+        Long laws stay ranked, with parent preambles before selected subclauses.
+        This API runs BEFORE the caller constructs its citation allowlist.
+        """
+        diag = copy.deepcopy(diagnostics)
+        if os.getenv("PSB_EVIDENCE_MODE", "adaptive") == "baseline" or not hits:
+            return hits, diag
+        scope = diag.get("resolved_scope", {})
+        if scope.get("conflicting_identifiers") or (
+            scope.get("ambiguous") and not scope.get("law_codes")
+            and not all(h.metadata.get("doc_type") == "regulation" for h in hits)
+        ):
+            diag["packet_route"] = "ambiguous_ranked"
+            return hits, diag
+        q = analyze_query(query, history, self._alias_numbers)
+        selected = {}
+        routes = []
+        total_text = 0
+
+        def add(row):
+            nonlocal total_text
+            if row.chunk_id in selected:
+                return
+            if len(selected) >= 40 or total_text + len(row.text) > 5600:
+                return
+            selected[row.chunk_id] = row
+            total_text += len(row.text)
+
+        # Keep the primary retrieval signal first; metadata belongs to each row.
+        for hit in hits[:2]:
+            add(hit)
+        # A short article or clause family carries exceptions alongside its rule.
+        # Never expand an entire long code or an unrelated article.
+        for hit in hits[:3]:
+            m = hit.metadata
+            if m.get("doc_type") != "law":
+                continue
+            rows = [i for i in self._rows_by_doc[m["doc_id"]]
+                    if self._index.chunks[i].metadata.get("article") == m.get("article")]
+            if len(rows) > 20 or sum(len(self._index.chunks[i].text) for i in rows) > 2300:
+                rows = [i for i in rows if m.get("clause") and all(
+                    self._index.chunks[i].metadata.get(k) == m.get(k) for k in ("part", "clause"))]
+            if rows and len(rows) <= 20 and sum(len(self._index.chunks[i].text) for i in rows) <= 2300:
+                for i in rows:
+                    add(self._result(i, q, 0.0, {"selection_reason": "article_conditions"}))
+                routes.append("article_conditions")
+        doc_ids = list(dict.fromkeys(h.metadata["doc_id"] for h in hits))
+        primary = scope.get("doc_id")
+        if primary:
+            doc_ids = [primary] + [d for d in doc_ids if d != primary]
+        for doc_id in doc_ids[:3]:
+            meta = self._documents[doc_id]
+            kind = meta["doc_type"]
+            if kind == "contract" and doc_id != primary:
+                continue
+            if kind == "regulation" and not q.comparative and temporal_status(meta, q) not in {"applicable", "undated"}:
+                continue
+            rows = [i for i in self._rows_by_doc[doc_id] if "реквизиты" not in
+                    normalize(self._index.chunks[i].metadata.get("section") or "")]
+            if kind == "contract":
+                rows += [i for i, c in enumerate(self._index.chunks)
+                         if c.metadata.get("parent_doc_id") == doc_id]
+            if len(rows) <= 32 and sum(len(self._index.chunks[i].text) for i in rows) <= 4600:
+                # Atomic expansion: never pretend to include the full document if it does not fit.
+                extras = [i for i in rows if self._index.chunks[i].chunk_id not in selected]
+                if len(selected) + len(extras) <= 40 and total_text + sum(len(self._index.chunks[i].text) for i in extras) <= 5600:
+                    for i in extras:
+                        add(self._result(i, q, 0.0, {"selection_reason": "document_packet"}))
+                    routes.append("short_" + kind)
+        for hit in hits:
+            if hit.metadata.get("doc_type") == "law" and hit.metadata.get("subclause"):
+                m = hit.metadata
+                # A subsection's opening conditions are part of its interpretation.
+                parents = [i for i in self._rows_by_doc[m["doc_id"]]
+                           if not self._index.chunks[i].metadata.get("subclause")
+                           and all(self._index.chunks[i].metadata.get(k) == m.get(k)
+                                   for k in ("article", "part", "clause"))]
+                for i in parents[:3]:
+                    add(self._result(i, q, 0.0, {"selection_reason": "parent_condition"}))
+            add(hit)
+        # Source IDs remain unchanged. ML2 may compact headers, never rewrite norms.
+        result = copy.deepcopy(list(selected.values()))
+        for hit in result:
+            hit.score_details["evidence_packet"] = True
+        diag["packet_route"] = "+".join(dict.fromkeys(routes)) or "ranked_with_parents"
+        diag["packet_count"] = len(result)
+        diag["packet_text_chars"] = total_text
+        return result, diag
+
     def search(self, query: str, top_k: int = 5, history: list | None = None,
                filters: dict | None = None) -> list[RetrievedChunk]:
         return self.search_with_diagnostics(query, top_k, history, filters)[0]

@@ -138,6 +138,8 @@ class Service:
             chunks, diagnostics = self.retriever.search_with_diagnostics(
                 question.text, top_k=self.top_k, history=history,
             )
+            if hasattr(self.retriever, "evidence_packet"):
+                chunks, diagnostics = self.retriever.evidence_packet(question.text, chunks, diagnostics, history)
         except Exception as exc:
             LOG.error("Retrieval failed (%s)", type(exc).__name__)
             raise BackendError("unavailable") from None
@@ -260,7 +262,9 @@ class _BlockingModel:
 
     def __init__(self, proxy: ModelProxy):
         self.proxy = proxy
-        self.review_capable = os.getenv("ANSWER_REVIEW", "0").lower() in {"1", "true", "yes"}
+        self.review_capable = os.getenv("ANSWER_REVIEW", "1").lower() in {"1", "true", "yes"}
+        self.calls = 0
+        self.max_calls = env_number("MAX_LLM_CALLS", 5, 1, 8)
         self.loop = asyncio.get_running_loop()
         self.lock = Lock()
         self.cancelled = False
@@ -271,6 +275,9 @@ class _BlockingModel:
         with self.lock:
             if self.cancelled:
                 raise BackendError("timeout")
+            if self.calls >= self.max_calls:
+                raise BackendError("timeout")
+            self.calls += 1
             pending = asyncio.run_coroutine_threadsafe(
                 self.proxy.complete(messages, temperature, max_tokens), self.loop,
             )
@@ -322,12 +329,20 @@ class ML2Generator:
             )
         finally:
             model.cancel()
+            LOG.info("Generation calls=%s review_enabled=%s packet_route=%s packet_count=%s",
+                     model.calls, model.review_capable, diagnostics.get("packet_route", "baseline"), len(chunks))
         if not answer.validated or re.search(r"\[\s*\d+\s*\]", answer.text):
             raise BackendError("invalid_response")
         if answer.is_refusal:
             kind = "refusal" if answer.citations else "insufficient"
+        elif answer.diagnostics.get("answerability") == "partial":
+            kind = "partial"
         else:
             kind = "answer"
+        LOG.info("Generation result kind=%s elapsed_ms=%s reviews=%s repairs=%s reviewer_rejects=%s evidence_dropped=%s",
+                 kind, answer.elapsed_ms, answer.diagnostics.get("semantic_reviews", 0),
+                 answer.diagnostics.get("semantic_repairs", 0), answer.diagnostics.get("reviewer_rejects", 0),
+                 answer.diagnostics.get("evidence_dropped", 0))
         source_ids = tuple(dict.fromkeys(answer.citation_map[eid] for eid in answer.citations))
         numbers = {source_id: index for index, source_id in enumerate(source_ids, 1)}
 
@@ -362,6 +377,6 @@ def create_service(
         retriever,
         generator,
         top_k=env_number("TOP_K", 5, 1, 12),
-        timeout=env_number("PSB_REQUEST_TIMEOUT", 25.0, 0.1, 90.0),
+        timeout=env_number("PSB_REQUEST_TIMEOUT", 60.0, 0.1, 90.0),
         chunks={chunk.chunk_id: chunk for chunk in indexes.chunks},
     )

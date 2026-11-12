@@ -1,0 +1,44 @@
+[
+  {
+    "id": "correct",
+    "calls": 1,
+    "status": "answer",
+    "pass": true,
+    "answer": "Гарантия составляет 24 месяца с даты поставки [1]."
+  },
+  {
+    "id": "obligation",
+    "calls": 1,
+    "status": "answer",
+    "pass": false,
+    "answer": "Поставщик обязан оплачивать товар в течение 24 месяцев с даты поставки [1]."
+  },
+  {
+    "id": "negation",
+    "calls": 1,
+    "status": "answer",
+    "pass": false,
+    "answer": "Гарантия не действует в течение 24 месяцев с даты поставки [1]."
+  },
+  {
+    "id": "trigger",
+    "calls": 1,
+    "status": "answer",
+    "pass": false,
+    "answer": "Гарантия действует 24 месяца с даты оплаты товара [1]."
+  },
+  {
+    "id": "uncited",
+    "calls": 1,
+    "status": "answer",
+    "pass": false,
+    "answer": "Гарантия составляет 24 месяца с даты поставки [1]. Покупатель вправе самовольно отменить все платежи поставщику."
+  },
+  {
+    "id": "unit",
+    "calls": 2,
+    "status": "invalid_response",
+    "pass": true,
+    "answer": ""
+  }
+]

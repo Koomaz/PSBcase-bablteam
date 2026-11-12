@@ -75,6 +75,7 @@ def parse_question(raw: str) -> tuple[str, list[dict[str, str]]]:
 
 def _meta_summary(meta: dict[str, Any]) -> dict[str, Any]:
     keys = (
+        "doc_id", "parent_doc_id", "snapshot_date", "provision_effective_date",
         "doc_title", "doc_type", "doc_number", "doc_date", "edition_date", "effective_date",
         "validity_period", "version_status", "temporal_status", "article",
         "section", "clause", "part", "subclause", "appendix", "amends_clause",
@@ -100,6 +101,9 @@ def build_evidence(
     items: list[dict[str, Any]] = []
     seen_ids: set[str] = set()
     total = 0
+    compact = any((getattr(chunk, "score_details", None) or {}).get("evidence_packet") for chunk in chunks)
+    if compact:
+        max_items, max_neighbors = 40, 0
 
     def add(chunk_id, text, source, metadata, citation, *, neighbor=False) -> bool:
         nonlocal total
@@ -112,7 +116,9 @@ def build_evidence(
             "eid": f"E{len(items) + 1}", "chunk_id": chunk_id, "source": source,
             "text": text.strip(), "meta": meta, "citation_payload": citation,
         }
-        cost = len(render_evidence([item])) + (2 if items else 0)
+        if compact:
+            item["compact"] = True
+        cost = len(render_evidence(items + [item])) - (len(render_evidence(items)) if items else 0)
         if total + cost > max_total_chars:
             return False
         items.append(item)

@@ -38,7 +38,7 @@ from ML2.llmguard.evidence import build_evidence, parse_question, premise_warnin
 from ML2.llmguard.prompt_builder import build_messages, build_repair_message, load_system_prompt
 from ML2.llmguard.validator import ensure_premise_ack, ensure_premise_gap, fallback_refusal, validate
 from ML2.llmguard.verifier import (
-    build_missing_repair_message, prune_reviewed_answer, review_answer, review_minimality,
+    build_missing_repair_message, build_review_repair_message, prune_reviewed_answer, review_answer, review_minimality,
 )
 
 
@@ -153,6 +153,8 @@ class LegalAssistant:
                     warnings = []
                 warnings.append(edition_note)
                 diagnostics["warnings"] = warnings
+            if hasattr(self.retriever, "evidence_packet"):
+                chunks, diagnostics = self.retriever.evidence_packet(question, chunks, diagnostics, history)
             return chunks, diagnostics
         except Exception as exc:  # retrieval не должен ронять весь прогон
             return [], {"warnings": [f"retrieval_error:{exc}"], "confidence": "low"}
@@ -177,6 +179,16 @@ class LegalAssistant:
         items = build_evidence(
             chunks, max_items=self.max_evidence, max_neighbors=self.max_neighbors
         )
+        diagnostics = dict(diagnostics)
+        diagnostics["evidence_count"] = len(items)
+        diagnostics["evidence_dropped"] = max(0, len(chunks) - len(items))
+        if not items:
+            return Answer(
+                qid=str(qid), question=question, text=fallback_refusal([]),
+                citations=[], attempts=0, issues=[], evidence_count=0,
+                diagnostics=diagnostics, elapsed_ms=int((time.perf_counter() - started) * 1000),
+                citation_map={}, validated=True, is_refusal=True, evidence_items=[], review_issues=[],
+            )
         warnings = premise_warnings(question, items)
         # Автоматическую преамбулу ставим только по числам и только когда вопрос
         # приписывает величину нашему документу. Сумма новой сделки (12 млн) —
@@ -240,12 +252,13 @@ class LegalAssistant:
         if (
             self.review_enabled
             and not result.critical
-            and result.citations
-            and not result.is_refusal
-            and len(result.cleaned.split()) >= 8
+            and items
+            and bool(result.cleaned)
         ):
             result, review_issues = self._review_and_repair(
-                question, items, result, messages, conflicts
+                question, items, result, messages, conflicts,
+                user_context=diagnostics.get("user_context", ""),
+                diagnostics=diagnostics,
             )
 
         text = result.cleaned
@@ -263,19 +276,22 @@ class LegalAssistant:
                 if checked.citations and checked.words >= 4 and not checked.critical:
                     text = stripped
 
+        generation_issues = list(result.issues)
         if result.ok:
             pass
         elif result.critical:
             # Неподтверждённый факт нельзя отдавать в CSV: выдумка обнуляет вопрос.
             # Вместо него — подтверждённая выдержка из того источника, на который ссылались.
-            text = fallback_refusal(items, prefer=result.citations[0] if result.citations else None)
+            text = ("Не удалось подтвердить ответ найденными положениями. "
+                    "Требуется уточнить применимое основание и условия вопроса.")
+            result = validate(text, items, self.max_words, question=question)
         elif result.citations and result.words >= 4:
             pass  # стилевые замечания не мешают ответу
         else:
-            text = fallback_refusal(items)
+            text = ("Не удалось подтвердить ответ найденными положениями. "
+                    "Требуется уточнить применимое основание и условия вопроса.")
+            result = validate(text, items, self.max_words, question=question)
 
-        text = ensure_premise_ack(text, conflicts, self.max_words)
-        text = ensure_premise_gap(text, conflicts, self.max_words)
         text = ensure_capitalized(text)
         final = validate(text, items, self.max_words, question=question, premise_conflicts=conflicts)
         text = render_citations(text, items, self.cite_style)
@@ -286,7 +302,7 @@ class LegalAssistant:
             text=text,
             citations=final.citations,
             attempts=attempts,
-            issues=result.issues,
+            issues=list(dict.fromkeys(generation_issues + result.issues)),
             evidence_count=len(items),
             diagnostics=diagnostics,
             elapsed_ms=int((time.perf_counter() - started) * 1000),
@@ -298,68 +314,66 @@ class LegalAssistant:
         )
 
     def _review_and_repair(
-        self,
-        question: str,
-        items: list[dict[str, Any]],
-        result: Any,
-        messages: list[dict[str, str]],
-        conflicts: list[str],
-    ) -> tuple[Any, list[str]]:
-        """Один редакторский проход: полнота, заземлённость, уместность, ссылки."""
+        self, question, items, result, messages, conflicts, *, user_context="", diagnostics=None,
+    ):
+        """Bounded semantic gate. No rejected draft survives repair or review failure."""
+        issues = []
+        diagnostics = diagnostics if diagnostics is not None else {}
+        diagnostics.update(semantic_reviews=0, semantic_repairs=0, reviewer_rejects=0)
+        review_question = question + ("\nОбстоятельства пользователя: " + user_context if user_context else "")
+
+        def reject(reason):
+            issues.append(reason)
+            result.critical.append(reason)
+            result.issues.append(reason)
+            result.ok = False
+            return result, issues
+
         if time.monotonic() > self.review_deadline:
-            return result, ["review_skipped_timeout"]
-        review = review_answer(self.llm, question, items, result.cleaned)
-        if review.ok or review.skipped:
-            return result, []
+            return reject("semantic_review_deadline")
+        review = review_answer(self.llm, review_question, items, result.cleaned)
+        diagnostics["semantic_reviews"] += 1
+        diagnostics["answerability"] = review.answerability
+        if review.skipped:
+            return reject("semantic_review_unavailable")
+        if review.ok:
+            return result, issues
+        diagnostics["reviewer_rejects"] += 1
+        issues.extend(review.issues)
+        if time.monotonic() > self.review_deadline:
+            return reject("semantic_repair_deadline")
 
-        # 1. Лишнее и недоказанное удаляем детерминированно — без свободного
-        # переписывания, которое само добавляет новые утверждения.
-        candidate = result
+        # Missing, unsupported and incorrectly cited statements all trigger repair.
         pruned_text = prune_reviewed_answer(result.cleaned, review)
-        if pruned_text != result.cleaned:
-            pruned = validate(
-                pruned_text, items, self.max_words, question=question, premise_conflicts=conflicts
-            )
-            if pruned.citations and pruned.words >= 4 and not pruned.critical:
-                candidate = pruned
-
-        # 2. Пропущенные обязательные элементы — только адресный repair.
-        if review.missing:
+        factual_repair = bool(review.missing or review.unsupported or review.wrong_refs)
+        candidate = None
+        if factual_repair or not pruned_text or pruned_text == result.cleaned:
+            diagnostics["semantic_repairs"] += 1
             repair = list(messages)
-            repair.append({"role": "assistant", "content": candidate.cleaned})
-            repair.append(build_missing_repair_message(review, candidate.cleaned))
+            repair.append({"role": "assistant", "content": result.cleaned})
+            message = (build_missing_repair_message(review, result.cleaned)
+                       if review.missing and not (review.unsupported or review.wrong_refs)
+                       else build_review_repair_message(review))
+            repair.append(message)
             try:
-                raw = self.llm.complete(
-                    repair, temperature=self.temperature, max_tokens=self.max_tokens * 2
-                )
-            except LLMError:
-                return candidate, review.issues
-            repaired = validate(
-                raw, items, self.max_words, question=question, premise_conflicts=conflicts
-            )
-            if repaired.citations and (
-                repaired.ok or len(repaired.issues) <= len(candidate.issues)
-            ):
-                candidate = repaired
-
-        # 3. Второе мнение — только сокращение. Нужно потому, что редактор полноты
-        # склонен прощать «полезные» подробности, а судья — нет.
-        review_issues = list(review.issues)
-        minimality_enabled = os.getenv("ANSWER_MINIMALITY", "0").strip().lower() in ("1", "true", "yes")
-        if minimality_enabled and time.monotonic() <= self.review_deadline:
-            minimal = review_minimality(self.llm, question, candidate.cleaned)
-            if not minimal.ok and not minimal.skipped:
-                pruned_text = prune_reviewed_answer(candidate.cleaned, minimal)
-                if pruned_text != candidate.cleaned:
-                    pruned = validate(
-                        pruned_text, items, self.max_words,
-                        question=question, premise_conflicts=conflicts,
-                    )
-                    if pruned.citations and pruned.words >= 4 and not pruned.critical:
-                        candidate = pruned
-                review_issues.extend(f"сокращено: {item}" for item in minimal.drop)
-
-        return candidate, review_issues
+                raw = self.llm.complete(repair, temperature=self.temperature, max_tokens=self.max_tokens * 2)
+            except Exception:
+                return reject("semantic_repair_unavailable")
+            candidate = validate(raw, items, self.max_words, question=question, premise_conflicts=conflicts)
+        else:
+            candidate = validate(pruned_text, items, self.max_words, question=question, premise_conflicts=conflicts)
+        if candidate.critical or not candidate.cleaned:
+            return reject("semantic_repair_invalid")
+        if time.monotonic() > self.review_deadline:
+            return reject("semantic_recheck_deadline")
+        checked = review_answer(self.llm, review_question, items, candidate.cleaned)
+        diagnostics["semantic_reviews"] += 1
+        diagnostics["answerability"] = checked.answerability
+        if checked.skipped or not checked.ok:
+            diagnostics["reviewer_rejects"] += 1
+            issues.extend(checked.issues)
+            return reject("semantic_recheck_rejected")
+        return candidate, issues
 
     def _trace(self, answer: Answer) -> None:
         if not self.trace_path:

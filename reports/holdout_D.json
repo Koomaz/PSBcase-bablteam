@@ -1,0 +1,187 @@
+{
+  "summary": {
+    "macro_coverage": 0.9666666666666667,
+    "complete": 9,
+    "positive": 10,
+    "negative_pass": 4,
+    "negative": 4,
+    "max_chars": 6655,
+    "median_ms": 14.16419999441132
+  },
+  "cases": [
+    {
+      "id": "h01",
+      "coverage": [
+        true,
+        true
+      ],
+      "negative_pass": null,
+      "chars": 4785,
+      "items": 18,
+      "packet_count": 18,
+      "route": "short_contract",
+      "ms": 27.444200008176267
+    },
+    {
+      "id": "h02",
+      "coverage": [
+        true,
+        true
+      ],
+      "negative_pass": null,
+      "chars": 4429,
+      "items": 17,
+      "packet_count": 17,
+      "route": "short_contract",
+      "ms": 15.21820000198204
+    },
+    {
+      "id": "h03",
+      "coverage": [
+        true,
+        true,
+        true
+      ],
+      "negative_pass": null,
+      "chars": 6517,
+      "items": 23,
+      "packet_count": 24,
+      "route": "short_contract",
+      "ms": 22.29059999808669
+    },
+    {
+      "id": "h04",
+      "coverage": [
+        true,
+        false,
+        true
+      ],
+      "negative_pass": null,
+      "chars": 6655,
+      "items": 23,
+      "packet_count": 24,
+      "route": "short_contract",
+      "ms": 19.632300012744963
+    },
+    {
+      "id": "h05",
+      "coverage": [
+        true,
+        true,
+        true
+      ],
+      "negative_pass": null,
+      "chars": 4117,
+      "items": 15,
+      "packet_count": 15,
+      "route": "short_contract",
+      "ms": 14.736799988895655
+    },
+    {
+      "id": "h06",
+      "coverage": [
+        true,
+        true,
+        true
+      ],
+      "negative_pass": null,
+      "chars": 3901,
+      "items": 12,
+      "packet_count": 12,
+      "route": "short_regulation",
+      "ms": 13.466699994751252
+    },
+    {
+      "id": "h07",
+      "coverage": [
+        true,
+        true
+      ],
+      "negative_pass": null,
+      "chars": 4484,
+      "items": 16,
+      "packet_count": 16,
+      "route": "short_regulation",
+      "ms": 17.14979999815114
+    },
+    {
+      "id": "h08",
+      "coverage": [
+        true,
+        true
+      ],
+      "negative_pass": null,
+      "chars": 2647,
+      "items": 8,
+      "packet_count": 8,
+      "route": "article_conditions+short_law",
+      "ms": 13.591599999926984
+    },
+    {
+      "id": "h09",
+      "coverage": [
+        true,
+        true
+      ],
+      "negative_pass": null,
+      "chars": 4639,
+      "items": 15,
+      "packet_count": 15,
+      "route": "short_law",
+      "ms": 18.522600003052503
+    },
+    {
+      "id": "h10",
+      "coverage": [
+        true,
+        true
+      ],
+      "negative_pass": null,
+      "chars": 1743,
+      "items": 5,
+      "packet_count": 5,
+      "route": "ranked_with_parents",
+      "ms": 9.258199992473237
+    },
+    {
+      "id": "h11",
+      "coverage": [],
+      "negative_pass": true,
+      "chars": 60,
+      "items": 0,
+      "packet_count": 0,
+      "route": "baseline",
+      "ms": 5.505699999048375
+    },
+    {
+      "id": "h12",
+      "coverage": [],
+      "negative_pass": true,
+      "chars": 60,
+      "items": 0,
+      "packet_count": 0,
+      "route": "baseline",
+      "ms": 2.8292999922996387
+    },
+    {
+      "id": "h13",
+      "coverage": [],
+      "negative_pass": true,
+      "chars": 60,
+      "items": 0,
+      "packet_count": 0,
+      "route": "baseline",
+      "ms": 2.4680999922566116
+    },
+    {
+      "id": "h14",
+      "coverage": [],
+      "negative_pass": true,
+      "chars": 60,
+      "items": 0,
+      "packet_count": 0,
+      "route": "baseline",
+      "ms": 0.5950000049779192
+    }
+  ]
+}

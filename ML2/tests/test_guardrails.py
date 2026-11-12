@@ -159,7 +159,8 @@ class TestValidator(unittest.TestCase):
     def test_false_refusal(self):
         result = validate("В документах нет данных об арендной плате.", self.items)
         self.assertTrue(result.is_refusal)
-        self.assertTrue(any("необоснованный отказ" in issue for issue in result.issues))
+        # Topical evidence alone cannot establish that the question is answerable.
+        self.assertFalse(result.critical, result.issues)
 
     def test_hallucinated_number(self):
         result = validate("Плата 500 000 рублей [E1].", self.items)
@@ -302,7 +303,9 @@ class TestPipeline(unittest.TestCase):
         chunks = [chunk("c1", "3.1. Арендная плата составляет 450 000 рублей в месяц.")]
         llm = ScriptedLLM("", "", "")
         answer = LegalAssistant(retriever=StubRetriever(chunks), llm=llm, max_attempts=2).answer("1", "Арендная плата?")
-        self.assertIn("(п. 3.1 договора № А-08/2024)", answer.text)
+        self.assertTrue(answer.is_refusal)
+        self.assertEqual(answer.citations, [])
+        self.assertNotIn("450 000", answer.text)
 
     def test_prompt_contains_hierarchy_and_evidence(self):
         items = build_evidence([chunk("c1", "текст положения")])
