@@ -23,12 +23,20 @@ export function ChatPanel({
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // поле ввода растёт по содержимому до 6 строк (дальше — прокрутка внутри)
+  // при переходе в диалог сразу фокусируем поле ввода
+  useEffect(() => {
+    textareaRef.current?.focus();
+  }, []);
+
+  // поле ввода растёт по содержимому до 6 строк (дальше — прокрутка внутри);
+  // полоса прокрутки появляется только когда контент реально не влезает
   useEffect(() => {
     const el = textareaRef.current;
     if (!el) return;
     el.style.height = "auto";
-    el.style.height = `${el.scrollHeight}px`;
+    const extra = el.offsetHeight - el.clientHeight; // рамки
+    el.style.height = `${el.scrollHeight + extra}px`;
+    el.style.overflowY = el.scrollHeight > el.clientHeight ? "auto" : "hidden";
   }, [input]);
 
   useEffect(() => {
@@ -113,8 +121,14 @@ export function ChatPanel({
             }
           }}
         />
-        <button type="submit" className="send" disabled={busy || !input.trim()}>
-          {busy ? "Думаю…" : "Отправить"}
+        <button
+          type="submit"
+          className="send"
+          disabled={busy || !input.trim()}
+          aria-label={busy ? "Думаю…" : "Отправить"}
+        >
+          <span className="send-label">{busy ? "Думаю…" : "Отправить"}</span>
+          <span className="send-icon" aria-hidden="true">➤</span>
         </button>
       </form>
       <div className="composer-hint">

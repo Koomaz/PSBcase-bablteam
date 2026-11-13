@@ -451,6 +451,11 @@ body {
   to { opacity: 1; transform: translateY(0); }
 }
 
+@keyframes sheet-in {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+
 @keyframes fade-in {
   from { opacity: 0; }
   to { opacity: 1; }
@@ -464,8 +469,8 @@ body {
 }
 
 .msg-user {
-  align-self: flex-end;
-  animation: msg-in-right 0.25s ease-out;
+  align-self: flex-start;
+  animation: msg-in-left 0.25s ease-out;
 }
 
 .msg-assistant {
@@ -493,12 +498,38 @@ body {
   background: var(--bubble-user);
   border-color: var(--bubble-user);
   color: var(--bubble-user-text);
-  border-bottom-right-radius: 4px;
+  border-bottom-left-radius: 4px;
 }
 
 .msg-assistant .bubble { border-bottom-left-radius: 4px; }
 
-.answer { white-space: pre-wrap; }
+/* markdown в ответах */
+
+.answer { line-height: 1.6; }
+
+.answer p { margin: 0 0 8px; }
+.answer p:last-child { margin-bottom: 0; }
+
+.answer h3, .answer h4, .answer h5 {
+  margin: 10px 0 6px;
+  font-size: 0.95rem;
+}
+
+.answer ul, .answer ol {
+  margin: 4px 0 10px;
+  padding-left: 22px;
+}
+
+.answer li { margin: 3px 0; }
+
+.answer code {
+  background: var(--surface-2);
+  border: 1px solid var(--line-soft);
+  border-radius: 6px;
+  padding: 1px 5px;
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+}
 
 .badge {
   display: inline-block;
@@ -568,6 +599,40 @@ body {
 
 .chip-num { color: var(--accent); font-weight: 700; }
 .chip-ref { color: var(--text-soft); }
+
+/* раскрытие длинного списка источников */
+
+.source-more {
+  border: none;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 600;
+  padding: 4px 8px;
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: left;
+  transition: var(--transition);
+}
+
+.source-more:hover { background: var(--accent-soft); }
+
+/* время сообщения */
+
+.msg-time {
+  margin-top: 4px;
+  font-size: 0.72rem;
+  color: var(--text-faint);
+  text-align: right;
+}
+
+.msg-assistant .msg-time { text-align: left; }
+
+.bubble-user .msg-time {
+  color: var(--bubble-user-text);
+  opacity: 0.7;
+}
 
 /* индикатор обработки */
 
@@ -642,6 +707,7 @@ body {
   outline: none;
   max-height: calc(6 * 1.45em + 26px); /* максимум 6 строк, дальше внутренняя прокрутка */
   overflow-y: auto;
+  overflow-x: hidden;
   transition: border-color var(--t) var(--ease), box-shadow var(--t) var(--ease);
 }
 
@@ -660,8 +726,15 @@ body {
   font: inherit;
   font-weight: 600;
   padding: 12px 22px;
+  min-width: 132px; /* размер кнопки не пляшет при смене подписи */
   cursor: pointer;
   transition: var(--transition);
+}
+
+.send-icon {
+  display: none;
+  font-size: 1em;
+  line-height: 1;
 }
 
 .send:hover:not(:disabled) { background: var(--accent-hover); }
@@ -675,7 +748,11 @@ body {
   color: var(--text-faint);
 }
 
-/* ---- панель источника ---- */
+/* ---- панель источника: поверх чата справа ---- */
+
+.sheet-handle {
+  display: none;
+}
 
 .source-panel {
   position: fixed;
@@ -692,24 +769,46 @@ body {
   animation: drawer-in-right 0.28s ease-out;
 }
 
-.source-panel-head {
+/* верхняя полоса панели: крестик и (на мобильном) рукоятка.
+   Контент скроллится под полосой — за крестиком ничего нет. */
+
+.sheet-grip {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 16px 20px;
-  border-bottom: 1px solid var(--line);
+  justify-content: flex-end;
+  min-height: 44px;
+  padding: 5px 10px;
+  position: relative;
+  flex-shrink: 0;
 }
 
-.source-panel-head h2 {
-  margin: 0;
-  font-size: 0.98rem;
-  color: var(--text);
+.sheet-close {
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+}
+
+/* иконки — в масштабе соседнего текста */
+
+.tab-icon {
+  flex-shrink: 0;
+  font-size: 1em;
+  line-height: 1;
+}
+
+.theme-icon {
+  font-size: 1em;
+  line-height: 1;
 }
 
 .panel-close {
   border: none;
   background: none;
-  font-size: 1.5rem;
+  font-size: 1.05rem;
   line-height: 1;
   color: var(--text-soft);
   cursor: pointer;
@@ -864,32 +963,99 @@ body {
 }
 
 @media (max-width: 720px) {
+  /* вертикальный формат: источник выезжает снизу шторкой
+     (как встроенный браузер в Telegram) */
+  .source-panel {
+    position: fixed;
+    inset: auto 0 0 0;
+    width: 100%;
+    height: var(--sheet-h, 44vh); /* свободная высота, без фиксированных положений */
+    border-left: none;
+    border-top: 1px solid var(--line);
+    border-radius: 18px 18px 0 0;
+    box-shadow: 0 -12px 32px rgba(15, 23, 42, 0.2);
+    z-index: 30;
+    animation: sheet-in 0.28s ease-out;
+    transition: height 0.18s ease;
+  }
+
+  /* в полуоткрытом состоянии контент не скроллится */
+  .source-panel:not(.scrollable) .source-panel-body {
+    overflow-y: hidden;
+  }
+
+  .source-panel.dragging {
+    transition: none;
+  }
+
+  .sheet-grip {
+    cursor: grab;
+    touch-action: none;
+    user-select: none;
+  }
+
+  .sheet-handle {
+    display: block;
+    position: absolute;
+    left: 50%;
+    top: 10px;
+    transform: translateX(-50%);
+    width: 44px;
+    height: 4px;
+    border-radius: 999px;
+    background: var(--line);
+  }
+
   /* компактная верхняя строка: только значки и короткие подписи */
   .brand h1 { display: none; }
   .wide-label { display: none; }
 
-  /* ярлычок «Диалоги» в левом верхнем углу окна чата */
+  /* ярлычок «Диалоги» — закладка на левом краю окна чата:
+     в покое только значок, при наведении раскрывается подпись */
   .dialogs-tab {
-    display: block;
+    display: flex;
+    align-items: center;
+    overflow: hidden;
     position: absolute;
-    top: 8px;
-    left: 8px;
+    top: 12px;
+    left: 0;
     z-index: 5;
+    max-width: 44px;
+    padding: 7px 13px;
     border: 1px solid var(--line);
+    border-left: none;
+    border-radius: 0 12px 12px 0;
     background: var(--surface);
     color: var(--text-soft);
-    border-radius: 10px;
-    padding: 6px 12px;
     font: inherit;
     font-size: 0.78rem;
     cursor: pointer;
     box-shadow: var(--shadow);
-    transition: var(--transition);
+    transition: max-width var(--t) var(--ease), color var(--t) var(--ease),
+      border-color var(--t) var(--ease);
   }
 
-  .dialogs-tab:hover {
+  .dialogs-tab:hover, .dialogs-tab:focus-visible {
+    max-width: 170px;
     border-color: var(--accent);
     color: var(--accent);
+  }
+
+  .tab-icon {
+    flex-shrink: 0;
+  }
+
+  .tab-label {
+    white-space: nowrap;
+    opacity: 0;
+    margin-left: 0;
+    transition: opacity var(--t) var(--ease), margin-left var(--t) var(--ease);
+  }
+
+  .dialogs-tab:hover .tab-label,
+  .dialogs-tab:focus-visible .tab-label {
+    opacity: 1;
+    margin-left: 8px;
   }
 
   /* выбор диалога — на всю область вместо чата */
@@ -918,4 +1084,16 @@ body {
   .messages { padding: 52px 10px 8px; }
   .composer { padding: 10px 10px 4px; }
   .composer-hint { padding: 4px 12px 10px; }
+
+  /* кнопка отправки — иконкой */
+  .send {
+    min-width: 0;
+    width: 48px;
+    height: 48px;
+    padding: 0;
+  }
+
+  .send-label { display: none; }
+  .send-icon { display: inline; }
 }
+

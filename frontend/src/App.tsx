@@ -148,7 +148,7 @@ export default function App() {
     const dialogId = activeId;
     if (busyIds.includes(dialogId)) return;
     const history = buildHistory(retryMessages ?? activeDialog.messages);
-    if (!retryMessages) pushMessage(dialogId, { role: "user", text });
+    if (!retryMessages) pushMessage(dialogId, { role: "user", text, at: Date.now() });
     patchDialog(dialogId, (d) =>
       d.messages.some((m) => m.role === "user") && d.title !== "Новый диалог"
         ? d
@@ -163,12 +163,14 @@ export default function App() {
         kind: result.kind,
         text: result.answer,
         sources: result.sources,
+        at: Date.now(),
       });
     } catch (err) {
       pushMessage(dialogId, {
         role: "error",
         text: "",
         errorMessage: (err as Error).message,
+        at: Date.now(),
       });
     } finally {
       setBusyIds((prev) => prev.filter((id) => id !== dialogId));
@@ -204,7 +206,7 @@ export default function App() {
             title="Сменить тему"
             onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
           >
-            {theme === "dark" ? "☀" : "☾"}
+            <span className="theme-icon">{theme === "dark" ? "☀" : "☾"}</span>
             <span className="wide-label">
               {theme === "dark" ? " Светлая" : " Тёмная"}
             </span>
@@ -232,8 +234,10 @@ export default function App() {
             type="button"
             className="dialogs-tab"
             onClick={() => setDialogsOpen(true)}
+            aria-label="Диалоги"
           >
-            ☰ Диалоги
+            <span className="tab-icon" aria-hidden="true">☰</span>
+            <span className="tab-label">Диалоги</span>
           </button>
           <ChatPanel
             key={activeDialog.id}

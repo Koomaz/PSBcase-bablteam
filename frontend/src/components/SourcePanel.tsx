@@ -1,4 +1,10 @@
-import { useEffect, useState } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 import { api, type Fragment, type Source } from "../lib/api";
 import { FEATURES } from "../lib/features";
 import { DocumentModal } from "./DocumentModal";
@@ -53,6 +59,17 @@ export function SourcePanel({
   const [error, setError] = useState<string | null>(null);
   const [showDocument, setShowDocument] = useState(false);
 
+  // мобильная шторка: высота свободная, без фиксированных положений —
+  // тянется за шапку или за контент (когда контент не скроллится),
+  // остаётся там, где отпустили
+  const [sheetHeight, setSheetHeight] = useState(() =>
+    typeof window === "undefined" ? 500 : Math.round(window.innerHeight * 0.44)
+  );
+  const [dragging, setDragging] = useState(false);
+  const dragRef = useRef<{ y: number; start: number } | null>(null);
+
+  const scrollable = sheetHeight > (typeof window === "undefined" ? 560 : window.innerHeight * 0.7);
+
   useEffect(() => {
     if (!source) return;
     let cancelled = false;
@@ -71,17 +88,68 @@ export function SourcePanel({
     };
   }, [source]);
 
+  function onDragStart(event: ReactPointerEvent) {
+    if (!window.matchMedia("(max-width: 720px)").matches) return;
+    const target = event.target as HTMLElement;
+    if (target.closest(".panel-close")) return;
+    // когда контент скроллится — скроллим его, шторку не тянем
+    if (target.closest(".source-panel-body") && scrollable) return;
+    event.preventDefault(); // чтобы браузер не перехватил указатель
+    dragRef.current = { y: event.clientY, start: sheetHeight };
+    setDragging(true);
+    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+  }
+
+  function onDragMove(event: ReactPointerEvent) {
+    const drag = dragRef.current;
+    if (!drag) return;
+    const min = 60; // ниже — шторку можно опустить почти до закрытия
+    const max = Math.round(window.innerHeight * 0.94);
+    const next = drag.start - (event.clientY - drag.y);
+    setSheetHeight(Math.min(max, Math.max(min, next)));
+  }
+
+  function onDragEnd() {
+    if (!dragRef.current) return;
+    dragRef.current = null;
+    setDragging(false);
+    // опустили ниже предела — закрываем (только вертикальный режим)
+    if (window.matchMedia("(max-width: 720px)").matches && sheetHeight < window.innerHeight * 0.25) {
+      onClose();
+    }
+  }
+
+  const grip = {
+    onPointerDown: onDragStart,
+    onPointerMove: onDragMove,
+    onPointerUp: onDragEnd,
+    onPointerCancel: onDragEnd,
+  };
+
   if (!source) return null;
 
   return (
-    <aside className="source-panel" aria-label="Источник">
-      <div className="source-panel-head">
-        <h2>Источник</h2>
-        <button type="button" className="panel-close" onClick={onClose} aria-label="Закрыть">
+    <aside
+      className={
+        "source-panel" +
+        (dragging ? " dragging" : "") +
+        (scrollable ? " scrollable" : "")
+      }
+      style={{ "--sheet-h": `${sheetHeight}px` } as CSSProperties}
+      aria-label="Источник"
+    >
+      <div className="sheet-grip" {...grip}>
+        <div className="sheet-handle" />
+        <button
+          type="button"
+          className="panel-close sheet-close"
+          onClick={onClose}
+          aria-label="Закрыть"
+        >
           ×
         </button>
       </div>
-      <div className="source-panel-body">
+      <div className="source-panel-body" {...grip}>
         <h3>{source.doc_title}</h3>
         <div className="meta">
           <MetaRow label="Положение" value={formatReference(source) || "—"} />
