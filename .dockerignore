@@ -23,3 +23,5 @@
 !frontend/postcss.config.mjs
 !frontend/src/
 !frontend/src/**
+
+!dialog_store.py

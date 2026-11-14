@@ -62,7 +62,7 @@ class Fixture(unittest.TestCase):
         self.root = Path(directory.name)
         with ZipFile(self.root / "knowledge-base.zip", "w") as archive:
             archive.writestr("документы компании__Договор поставки ПТ-05-2023 Альфа-Трейдинг.txt", DEMO_DOCUMENT)
-        config = patch.dict(os.environ, {"DATA_DIR": str(self.root)}, clear=True)
+        config = patch.dict(os.environ, {"DATA_DIR": str(self.root), "PSB_DB_PATH": str(self.root / "dialogs.sqlite3")}, clear=True)
         config.start()
         self.addCleanup(config.stop)
 
@@ -279,7 +279,7 @@ class ApiChecks(Fixture):
             return await fake_generator(question, chunks, diagnostics)
 
         with TestClient(create_app(generator=generator)) as client:
-            self.assertEqual(client.get("/health/ready").json(), {"status": "ready"})
+            self.assertEqual(client.get("/health/ready").json()["status"], "ready")
             answer = client.post("/api/chat", json={
                 "question": SAMPLE_QUERY,
                 "history": [{"role": "user", "content": "Речь о ПТ-05/2023."}],
