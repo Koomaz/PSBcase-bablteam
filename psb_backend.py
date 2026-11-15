@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from concurrent.futures import CancelledError, Future
+from contextvars import ContextVar
 import logging
 import os
 import re
@@ -16,15 +17,17 @@ from urllib.parse import urlsplit
 import httpx
 
 LOG = logging.getLogger(__name__)
+REQUEST_ID = ContextVar("request_id", default="batch")
 
 FLAT_RUNTIME = Path(__file__).with_name("retrieval_runtime.py").is_file()
 if FLAT_RUNTIME:
-    from retrieval_runtime import Chunk, RetrievedChunk, Retriever, Settings, build_indexes, resolve_kb_source
+    from retrieval_runtime import Chunk, RetrievedChunk, Retriever, Settings, build_indexes, resolve_kb_source, load_documents
 else:
     from ML1.retrieval import RetrievedChunk, Retriever, Settings
     from ML1.retrieval.artifacts import build_indexes
     from ML1.retrieval.retriever import resolve_kb_source
     from ML1.retrieval.schemas import Chunk
+    from ML1.retrieval.document_parser import load_documents
 
 ANSWER_LIMIT = 10_000
 TECHNICAL_ANSWER = "Не удалось обработать вопрос из-за технического сбоя."
@@ -37,7 +40,9 @@ ERROR_CODES = {"unavailable", "timeout", "upstream", "invalid_response"}
 class BackendError(Exception):
     """Stable public error code. Exception details stay within the adapter."""
 
-    def __init__(self, code: str):
+    def __init__(self, code: str, reason: str | None = None):
+        safe = {"empty_content", "validation_failed", "numeric_citation", "malformed_response", "request_timeout", "unauthorized", "service_error", "component_unavailable"}
+        self.reason = reason if reason in safe else {"timeout": "request_timeout", "unavailable": "component_unavailable", "invalid_response": "malformed_response"}.get(code, "service_error")
         super().__init__(code if code in ERROR_CODES else "internal")
 
 
@@ -129,6 +134,7 @@ class Service:
         self.top_k = top_k
         self.timeout = timeout
         self.chunks = chunks if chunks is not None else {}
+        self.documents: dict[str, dict] = {}
 
     async def ask(self, question: Question) -> Answer:
         if not question.text.strip():
@@ -229,13 +235,19 @@ class ModelProxy:
         response = await self._request(payload)
         try:
             data = response.json()
-            return self.extract(data), data["choices"][0].get("finish_reason")
+            finish = data["choices"][0].get("finish_reason")
+            LOG.info("request_id=%s finish_reason=%s", REQUEST_ID.get(), finish if finish in {"stop", "length", "content_filter", None} else "other")
+            try:
+                return self.extract(data), finish
+            except KeyError:
+                raise BackendError("invalid_response", "empty_content") from None
         except (ValueError, KeyError, IndexError, TypeError, AttributeError):
-            raise BackendError("invalid_response") from None
+            raise BackendError("invalid_response", "malformed_response") from None
 
     async def _request(self, payload: dict) -> httpx.Response:
         error = "upstream"
         for attempt in range(2):
+            LOG.info("request_id=%s http_attempt=%s", REQUEST_ID.get(), attempt + 1)
             try:
                 response = await self.client.post(
                     self.url, headers={"Authorization": f"Bearer {self.key}"}, json=payload,
@@ -243,7 +255,7 @@ class ModelProxy:
                 if response.is_success:
                     return response
                 if response.status_code != 429 and response.status_code < 500:
-                    raise BackendError("upstream")
+                    raise BackendError("upstream", "unauthorized" if response.status_code in {401,403} else "service_error")
             except httpx.TimeoutException:
                 error = "timeout"
             except httpx.RequestError:
@@ -266,9 +278,12 @@ class _BlockingModel:
         self.cancelled = False
         self.pending: Future | None = None
         self.last_finish_reason: str | None = None
+        self.attempt = 0
 
     def complete(self, messages: list[dict], temperature: float, max_tokens: int) -> str:
         with self.lock:
+            self.attempt += 1
+            LOG.info("request_id=%s model_call=%s", REQUEST_ID.get(), self.attempt)
             if self.cancelled:
                 raise BackendError("timeout")
             pending = asyncio.run_coroutine_threadsafe(
@@ -322,8 +337,12 @@ class ML2Generator:
             )
         finally:
             model.cancel()
-        if not answer.validated or re.search(r"\[\s*\d+\s*\]", answer.text):
-            raise BackendError("invalid_response")
+        issue_types = sorted({"number" if "число" in issue else "citation" if "ссыл" in issue else "length" if "слов" in issue else "other" for issue in answer.issues})
+        LOG.info("request_id=%s attempts=%s validation_issues=%s issue_types=%s validated=%s", REQUEST_ID.get(), answer.attempts, len(answer.issues), issue_types, answer.validated)
+        if re.search(r"\[\s*\d+\s*\]", answer.text):
+            raise BackendError("invalid_response", "numeric_citation")
+        if not answer.validated:
+            raise BackendError("invalid_response", "validation_failed")
         if answer.is_refusal:
             kind = "refusal" if answer.citations else "insufficient"
         else:
@@ -358,10 +377,16 @@ def create_service(
              settings.reranker_model if settings.configured and settings.reranker_top_n else "disabled",
              indexes.manifest["known_limitations"])
     retriever = Retriever(indexes, settings)
-    return Service(
+    service = Service(
         retriever,
         generator,
         top_k=env_number("TOP_K", 5, 1, 12),
         timeout=env_number("PSB_REQUEST_TIMEOUT", 25.0, 0.1, 90.0),
         chunks={chunk.chunk_id: chunk for chunk in indexes.chunks},
     )
+    documents, _ = load_documents(resolve_kb_source(directory))
+    service.documents = {doc.metadata["doc_id"]: {
+        "doc_id": doc.metadata["doc_id"], "doc_title": doc.metadata["doc_title"],
+        "file_path": doc.metadata["file_path"], "text": doc.text, "offset_encoding": "unicode_codepoints",
+    } for doc in documents}
+    return service

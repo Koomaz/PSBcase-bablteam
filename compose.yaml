@@ -5,6 +5,7 @@ services:
       - "127.0.0.1:${PSB_PORT:-8000}:8000"
     environment:
       DATA_DIR: /data
+      PSB_DB_PATH: /state/dialogs.sqlite3
       LLM_BASE_URL: ${LLM_BASE_URL:-${OPENAI_BASE_URL:-}}
       LLM_API_KEY: ${LLM_API_KEY:-${OPENAI_API_KEY:-}}
       LLM_MODEL: ${LLM_MODEL:-${OPENAI_MODEL:-${GEN_MODEL:-}}}
@@ -20,6 +21,7 @@ services:
       PSB_REQUEST_TIMEOUT: ${PSB_REQUEST_TIMEOUT:-25}
       PSB_CORS_ORIGINS: ${PSB_CORS_ORIGINS:-}
     volumes:
+      - dialog_data:/state
       - type: bind
         source: ${PSB_DATA_DIR:-./data}
         target: /data
@@ -41,3 +43,6 @@ services:
       timeout: 5s
       retries: 3
       start_period: 15s
+
+volumes:
+  dialog_data:

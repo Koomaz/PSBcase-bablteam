@@ -50,18 +50,19 @@ export function DocumentModal({
 
   function highlight(): { before: string; target: string; after: string } {
     const text = doc?.text ?? "";
+    const characters = Array.from(text);
     let start = source.char_start ?? 0;
     let end = source.char_end ?? 0;
-    if (!(start < end && end <= text.length)) {
+    if (!(start < end && end <= characters.length)) {
       const found = text.indexOf(source.source_reference?.split(", ")[0] ?? "");
       const fallback = found >= 0 ? text.indexOf("\n", found) : -1;
-      start = Math.max(0, fallback);
+      start = Array.from(text.slice(0, Math.max(0, fallback))).length;
       end = start;
     }
     return {
-      before: text.slice(0, start),
-      target: text.slice(start, end),
-      after: text.slice(end),
+      before: characters.slice(0, start).join(""),
+      target: characters.slice(start, end).join(""),
+      after: characters.slice(end).join(""),
     };
   }
 
