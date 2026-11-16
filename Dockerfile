@@ -10,7 +10,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 DATA_DIR=/data PSB_DB_PATH=/sta
 WORKDIR /app
 COPY requirements-api.txt ./
 RUN pip install --no-cache-dir -r requirements-api.txt && useradd --uid 10001 --create-home app && mkdir /state && chown 10001:10001 /state
-COPY psb_backend.py web_api.py solution.py dialog_store.py ./
+COPY psb_backend.py web_api.py solution.py dialog_store.py contender_context.py contender_answer.py contender_service.py retrieval_runtime.py ./
 COPY ML1/retrieval ./ML1/retrieval
 COPY ML2/solution.py ./ML2/solution.py
 COPY ML2/llmguard ./ML2/llmguard

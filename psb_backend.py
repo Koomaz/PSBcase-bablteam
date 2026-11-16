@@ -1,4 +1,4 @@
-"""Shared question pipeline for the submission and the web API."""
+"""HTTP source contract and compatibility adapter for the web API."""
 
 from __future__ import annotations
 
@@ -306,7 +306,7 @@ class _BlockingModel:
 class ML2Generator:
     def __init__(self, client: httpx.AsyncClient):
         try:
-            if FLAT_RUNTIME:
+            if Path(__file__).with_name("ml2_solution.py").is_file():
                 from client import ChatClient
                 from ml2_solution import LegalAssistant, load_system_prompt
                 from validator import CITE_RE
@@ -364,7 +364,8 @@ def create_service(
     generator: Generator | None = None,
 ) -> Service:
     if generator is None:
-        generator = ML2Generator(client)
+        from contender_service import ContenderService
+        return ContenderService(directory, client)
     mode = os.getenv("PSB_RETRIEVAL_MODE", "local").strip().lower()
     if mode not in {"local", "bge", "bge_qwen"}:
         raise ValueError("PSB_RETRIEVAL_MODE must be local, bge or bge_qwen")

@@ -1,0 +1,91 @@
+{
+  "date": "2026-11-15",
+  "archive_sha256": "cd7331384082ebd62e4e84d5a7a25e65aa1e329cbba06a7a64478a82964451d1",
+  "test_type": "local_fake_model_transport",
+  "cases": [
+    {
+      "case": "normal",
+      "kb_name": "knowledge-base.zip",
+      "rows": 18,
+      "calls": 18,
+      "seconds": 0.51,
+      "stats": {
+        "accepted_first": 18
+      }
+    },
+    {
+      "case": "normal",
+      "kb_name": "knowledge_base.zip",
+      "rows": 18,
+      "calls": 18,
+      "seconds": 0.47,
+      "stats": {
+        "accepted_first": 18
+      }
+    },
+    {
+      "case": "normal",
+      "kb_name": "kb.zip",
+      "rows": 18,
+      "calls": 18,
+      "seconds": 0.48,
+      "stats": {
+        "accepted_first": 18
+      }
+    },
+    {
+      "case": "unknown",
+      "kb_name": "knowledge-base.zip",
+      "rows": 1,
+      "calls": 2,
+      "seconds": 0.39,
+      "stats": {
+        "repair_requested": 1,
+        "accepted_repair": 1
+      }
+    },
+    {
+      "case": "quantity",
+      "kb_name": "knowledge-base.zip",
+      "rows": 1,
+      "calls": 2,
+      "seconds": 0.36,
+      "stats": {
+        "repair_requested": 1,
+        "accepted_repair": 1
+      }
+    },
+    {
+      "case": "transient",
+      "kb_name": "knowledge-base.zip",
+      "rows": 1,
+      "calls": 2,
+      "seconds": 0.89,
+      "stats": {
+        "accepted_first": 1
+      }
+    },
+    {
+      "case": "compat",
+      "kb_name": "knowledge-base.zip",
+      "rows": 1,
+      "calls": 2,
+      "seconds": 0.36,
+      "stats": {
+        "accepted_first": 1
+      }
+    },
+    {
+      "case": "slow",
+      "kb_name": "knowledge-base.zip",
+      "rows": 1,
+      "calls": 1,
+      "seconds": 26.38,
+      "stats": {
+        "accepted_first": 1
+      }
+    }
+  ],
+  "passed": true,
+  "real_model_tested": false
+}

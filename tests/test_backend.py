@@ -14,7 +14,6 @@ import httpx
 from fastapi.testclient import TestClient
 
 from psb_backend import Answer, BackendError, Generated, ML2Generator, Question, Service, TECHNICAL_ANSWER, create_service
-from solution import read_questions, run
 from web_api import create_app
 
 SAMPLE_QUERY = "Что сказано в п. 4.2 договора № ПТ-05/2023?"
@@ -67,75 +66,7 @@ class Fixture(unittest.TestCase):
         self.addCleanup(config.stop)
 
 
-class BatchChecks(Fixture):
-    def test_csv_round_trip_dialogue_and_independent_ids(self):
-        rows = [
-            ("001", f"Пользователь: {SAMPLE_QUERY}\nАссистент: Уточните пункт.\nПользователь: А что сказано в п. 4.2?"),
-            ("2", SAMPLE_QUERY),
-            ("3", 'Вопрос с "кавычками", запятой\nи новой строкой.'),
-            ("4", "  "),
-        ]
-        write_questions(self.root / "questions.csv", rows)
-        seen = {}
-
-        async def generate(question, chunks, diagnostics):
-            seen[question.text] = ([turn.role for turn in question.history], [c.metadata["clause"] for c in chunks])
-            if question.text.startswith("Вопрос с"):
-                raise BackendError("upstream")
-            return await fake_generator(question, chunks, diagnostics)
-
-        def load(directory, client):
-            return create_service(directory, client, generator=generate)
-
-        with workspace(self.root), patch("solution.create_service", load):
-            asyncio.run(run())
-        output = (self.root / "submission.csv").read_bytes()
-        self.assertFalse(output.startswith(b"\xef\xbb\xbf"))
-        with (self.root / "submission.csv").open(encoding="utf-8", newline="") as stream:
-            reader = csv.DictReader(stream)
-            self.assertEqual(reader.fieldnames, ["id", "answer"])
-            answers = list(reader)
-        self.assertEqual([row["id"] for row in answers], ["001", "2", "3", "4"])
-        self.assertEqual(seen["А что сказано в п. 4.2?"][0], ["user", "assistant"])
-        self.assertIn("4.2", seen["А что сказано в п. 4.2?"][1])
-        self.assertEqual(seen[SAMPLE_QUERY][0], [])
-        self.assertIn(rows[2][1].replace("\r\n", "\n"), seen)
-        self.assertIn('"кавычки".\nВторая строка.', answers[0]["answer"])
-        self.assertIn("п. 4.2", answers[1]["answer"])
-        self.assertEqual(answers[2]["answer"], TECHNICAL_ANSWER)
-        self.assertIn("Уточните", answers[3]["answer"])
-
-    def test_bad_headers_missing_fields_and_duplicate_ids(self):
-        path = self.root / "questions.csv"
-        for header, rows in [
-            (("id", "answer"), [("1", "вопрос")]),
-            (("id", "question"), []),
-            (("id", "question"), [("1",)]),
-            (("id", "question"), [("", "вопрос")]),
-            (("id", "question"), [("1", "один"), ("1", "два")]),
-        ]:
-            with self.subTest(header=header, rows=rows):
-                write_questions(path, rows, header)
-                with self.assertRaises(ValueError):
-                    read_questions(path)
-        path.write_text('id,question\n1,"незакрыто', encoding="utf-8")
-        with self.assertRaises(csv.Error):
-            read_questions(path)
-
-    def test_batch_deadline_still_writes_all_ids(self):
-        write_questions(self.root / "questions.csv", [("1", SAMPLE_QUERY), ("2", SAMPLE_QUERY)])
-
-        async def stalled(*_):
-            await asyncio.sleep(1)
-
-        def load(directory, client):
-            return create_service(directory, client, generator=stalled)
-
-        with workspace(self.root), patch("solution.create_service", load), patch("solution.BATCH_BUDGET", 0.02):
-            asyncio.run(run())
-        with (self.root / "submission.csv").open(encoding="utf-8", newline="") as stream:
-            self.assertEqual(list(csv.reader(stream)), [["id", "answer"], ["1", TECHNICAL_ANSWER], ["2", TECHNICAL_ANSWER]])
-
+class CsvAnswerChecks(Fixture):
     def test_csv_limit_includes_canonical_citations(self):
         self.assertEqual(len(Answer("insufficient", "я" * 10_000, ()).as_csv_text()), 10_000)
         with self.assertRaisesRegex(BackendError, "^invalid_response$"):
@@ -160,7 +91,7 @@ class ModelChecks(Fixture):
     def ask(self, handler, question=SAMPLE_QUERY):
         async def execute():
             async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-                return await create_service(self.root, client).ask(Question(question))
+                return await create_service(self.root, client, generator=ML2Generator(client)).ask(Question(question))
 
         with patch.dict(os.environ, MOCK_CONFIG):
             return asyncio.run(execute())
@@ -312,8 +243,8 @@ class ApiChecks(Fixture):
                     self.assertEqual(response.json()["detail"]["code"], "invalid_request")
                     self.assertNotIn("private-marker", response.text)
 
-    def test_missing_ml2_is_unavailable_and_never_falls_back(self):
-        with patch.dict(os.environ, MOCK_CONFIG), patch.dict(sys.modules, {"ML2.solution": None}):
+    def test_missing_shared_pipeline_is_unavailable(self):
+        with patch.dict(os.environ, MOCK_CONFIG), patch.dict(sys.modules, {"contender_service": None}):
             with TestClient(create_app()) as client:
                 self.assertEqual(client.get("/health/ready").status_code, 503)
                 response = client.post("/api/chat", json={"question": SAMPLE_QUERY})

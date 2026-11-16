@@ -21,15 +21,10 @@ except ImportError:
     resource = None
 
 EXPECTED_FILES = {
-    "solution.py", "psb_backend.py", "retrieval_runtime.py", "requirements.txt",
-    "ml2_solution.py", "client.py", "csvio.py", "evidence.py",
-    "prompt_builder.py", "validator.py", "system_prompt.py", "citations.py",
-    "editions.py", "postprocess.py", "textutil.py", "verifier.py",
+    "solution.py", "contender_context.py", "contender_answer.py",
+    "retrieval_runtime.py", "requirements.txt",
 }
-FAKE_ANSWER = (
-    'Посылка не подтверждается, "проверка" требует сверить условия с найденным положением '
-    'и учитывать его применимость к указанным в вопросе обстоятельствам [E1].'
-)
+FAKE_ANSWER = 'Тестовый ответ, "кавычки". Проверяемое положение приведено в источнике [S1].'
 NO_EVIDENCE = (
     "В предоставленных документах ответа нет: отсутствуют релевантные положения. "
     "Для ответа нужен документ, регулирующий указанные обстоятельства."
@@ -48,11 +43,11 @@ def verify(zip_path: Path, questions: Path, knowledge_base: Path) -> None:
                 body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
                 assert body["model"] == "local-model"
                 messages = body["messages"]
-                content = next(message["content"] for message in messages if message["content"].startswith("<evidence>"))
-                question = re.search(r"<question>(.*?)</question>", content, re.S)[1].strip()
-                context = re.search(r"<user_context>(.*?)</user_context>", content, re.S)[1].strip()
-                requests.append((question, context != "(нет)"))
-                answer = FAKE_ANSWER if "[E1]" in content else NO_EVIDENCE
+                content = json.loads(messages[1]["content"])
+                question = content["question"]
+                history = content["dialogue_context"]
+                requests.append((question, bool(history)))
+                answer = FAKE_ANSWER if content["knowledge_evidence"] else NO_EVIDENCE
                 raw = json.dumps({"choices": [{"message": {"content": answer}, "finish_reason": "stop"}]}).encode()
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
@@ -113,7 +108,9 @@ def verify(zip_path: Path, questions: Path, knowledge_base: Path) -> None:
         if result.returncode:
             raise RuntimeError(f"Submission failed: {result.stderr}")
         assert not failures, failures
-        assert "failures: {}" in result.stdout
+        stats = json.loads(result.stdout.strip().splitlines()[-1])
+        assert stats["completed"] == 18
+        assert stats["stats"].get("source_fallback", 0) == 0
 
         with questions.open(encoding="utf-8-sig", newline="") as stream:
             expected = [row["id"] for row in csv.DictReader(stream)]
@@ -126,9 +123,10 @@ def verify(zip_path: Path, questions: Path, knowledge_base: Path) -> None:
         assert [row["id"] for row in rows] == expected
         assert len(expected) == len(set(expected)) == 18
         assert all(set(row) == {"id", "answer"} and 0 < len(row["answer"]) <= 10_000 for row in rows)
-        generated = [row for row in rows if "Источники:" in row["answer"]]
+        generated = [row for row in rows if '"кавычки"' in row["answer"]]
         assert generated and len(requests) >= 18
-        assert all('"проверка"' in row["answer"] and "Источники:" in row["answer"] for row in generated)
+        assert all('"кавычки"' in row["answer"] and "(" in row["answer"] for row in generated)
+        assert all(not re.search(r"\[(?:S|E)\d+\]", row["answer"]) for row in rows)
         assert len({question for question, history in requests if history}) == 5
         assert all(not question.startswith("Пользователь:") for question, _ in requests)
         memory = ""

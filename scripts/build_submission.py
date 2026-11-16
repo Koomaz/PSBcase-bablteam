@@ -1,31 +1,23 @@
 """Build the organizer's flat ZIP using only the explicitly listed files."""
 
 import argparse
-import runpy
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
 ROOT = Path(__file__).resolve().parents[1]
-ML2 = ROOT / "ML2"
 FILES = {
     "solution.py": ROOT / "solution.py",
-    "psb_backend.py": ROOT / "psb_backend.py",
-    "retrieval_runtime.py": ROOT / "ML1" / "retrieval_runtime.py",
+    "contender_context.py": ROOT / "contender_context.py",
+    "contender_answer.py": ROOT / "contender_answer.py",
+    "retrieval_runtime.py": ROOT / "retrieval_runtime.py",
     "requirements.txt": ROOT / "requirements.txt",
-    "ml2_solution.py": ML2 / "solution.py",
 }
 MAX_ZIP_BYTES = 128_000_000
 
 
 def build(target: Path) -> None:
-    ml2_builder = runpy.run_path(str(ML2 / "build_submission.py"))
-    sources = {**FILES, **{name: ML2 / "llmguard" / name for name in ml2_builder["MODULES"]}}
-    files = {name: path.read_bytes() for name, path in sources.items()}
-    for name, path in sources.items():
-        if path == ML2 / "solution.py" or path.parent == ML2 / "llmguard":
-            files[name] = ml2_builder["_rewrite_imports"](files[name].decode("utf-8")).encode("utf-8")
-    files["system_prompt.py"] = ml2_builder["_prompt_module"]().encode("utf-8")
+    files = {name: path.read_bytes() for name, path in FILES.items()}
     target.parent.mkdir(parents=True, exist_ok=True)
     with NamedTemporaryFile(dir=target.parent, delete=False) as stream:
         temp = Path(stream.name)
